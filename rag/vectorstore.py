@@ -8,7 +8,7 @@ def make_chunk_id(source,index,content):
         raw.encode()
         ).hexdigest()
 
-def ingest_vectorstore(docs):
+def ingest_vectorstore(chunks):
     embeddings=get_embeddings()
 
     vectorstore=Chroma(
