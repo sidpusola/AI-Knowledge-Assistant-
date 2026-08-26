@@ -1,15 +1,7 @@
-# Secrets
+uploads/
+frontend/node_modules/
 .env
-
-# Python
 __pycache__/
 *.pyc
-.venv/
-venv/
-
-# Chroma database
 chroma_db/
-
-# IDE
 .vscode/
-.idea/
