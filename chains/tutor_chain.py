@@ -1,10 +1,10 @@
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda
 
 from rag.vectorstore import load_vectorstore
 from rag.retriever import get_retriever
-from llm.model import get_llm
+from llm.provider import route_llm, safe_invoke
 
 prompt=ChatPromptTemplate.from_messages([
     (
@@ -40,18 +40,22 @@ def get_tutor_chain():
 
     retriever=get_retriever(vectorstore)
 
-    llm=get_llm()
+    def answer_question(question:str) -> str:
+        context=format_docs(retriever.invoke(question))
 
-    chain=(
-         {
-              "context":retriever|format_docs,
-              "question":RunnablePassthrough()
+        # llm is picked per-question - short/simple questions get the fast
+        # model, longer/complex ones get the general-purpose model. See
+        # llm/provider.py:route_llm for the routing logic.
+        llm=route_llm(question)
 
-         }|prompt
-          |llm
-          |StrOutputParser()
-    )
-    return chain
+        chain=prompt|llm|StrOutputParser()
+
+        return safe_invoke(chain, {
+            "context":context,
+            "question":question
+        })
+
+    return RunnableLambda(answer_question)
 
 def ask_tutor(question:str):
      chain=get_tutor_chain()
