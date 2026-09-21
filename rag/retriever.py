@@ -1,8 +1,10 @@
+from config import settings
+
 def get_retriever(vectorstore):
 
     retriever=vectorstore.as_retriever(
         search_kwargs={
-                     "k":3
+                     "k":settings.RETRIEVER_K
                }
     )
     return retriever

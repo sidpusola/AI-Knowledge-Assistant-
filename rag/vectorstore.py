@@ -1,7 +1,9 @@
 import hashlib
 from langchain_chroma import Chroma
 from .embeddings import get_embeddings
-DB_path="./chroma_db"
+from config import settings
+
+DB_path=settings.CHROMA_DB_PATH
 def make_chunk_id(source,index,content):
     raw=f"{source}:{index}:{content}"   #combine them and then hash that string
     return hashlib.sha256(

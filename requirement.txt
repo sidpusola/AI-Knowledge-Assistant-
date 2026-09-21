@@ -1,0 +1,26 @@
+# Pinned to what's installed and verified working in the "Langchain" conda env
+# (Python 3.14.3). Install with: pip install -r requirement.txt
+
+# --- API ---
+fastapi==0.141.1
+uvicorn==0.52.1
+python-multipart==0.0.32
+
+# --- Config ---
+pydantic==2.13.4
+
+# --- LangChain core + integrations ---
+langchain-core==1.5.3
+langchain-community==0.4.2
+langchain-text-splitters==1.1.2
+langchain-chroma==1.1.0
+langchain-huggingface==1.2.2
+langchain-ollama==1.1.0
+
+# --- Vector store + embeddings ---
+chromadb==1.5.9
+sentence-transformers==5.7.0
+
+# --- Document loaders (PDF / DOCX) ---
+pypdf==6.14.2
+docx2txt==0.9
