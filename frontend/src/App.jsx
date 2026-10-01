@@ -1,122 +1,101 @@
-import { useState } from 'react'
-import "./App.css"
-function App(){
-  const[file,setFile]=useState(null);
-  const[question,setQuestion]=useState("");
-  const[answer,setAnswer]=useState("");
-  const[uploadMessage,setUploadMessage]=useState("");
-  const[loading, setLoading]=useState(false);
-  const[uploading,setUploading]=useState(false);
+import { useEffect, useState } from "react";
+import "./App.css";
+import ChatView from "./components/ChatView.jsx";
+import KnowledgeBase from "./components/KnowledgeBase.jsx";
+import { resetSession } from "./api.js";
 
-  const uploadFile=async()=>{           //communicating with backend takes time
-    if(!file){
-      setUploadMessage("Please select a file.");
-      return;
-    }
-    setUploading(true);
+function getOrCreateSessionId() {
+  const existing = localStorage.getItem("aika_session_id");
+  if (existing) return existing;
 
-    const formData=new FormData();   //used to send files through HTTP to backend
-    formData.append("file",file);
-    
+  const created = crypto.randomUUID();
+  localStorage.setItem("aika_session_id", created);
+  return created;
+}
 
-    try{
-      const response=await fetch("http://127.0.0.1:8000/upload",{         //sending file with fetch
-        method:"POST",
-        body:formData,
-      });
-      
-      const data= await response.json();  
+function getInitialTheme() {
+  const saved = localStorage.getItem("aika_theme");
+  if (saved === "light" || saved === "dark") return saved;
 
-      if(!response.ok){
-        setUploadMessage(data.detail || "upload failed");
-        return;
-      }
+  // No explicit choice yet - follow whatever the device is set to.
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
-      setUploadMessage(data.message);
-    }catch(error){
-      setUploadMessage("Could not connect to backend");
-    }finally{
-      setUploading(false);
-    }
+function App() {
+  const [sessionId, setSessionId] = useState(getOrCreateSessionId);
+  const [activeTab, setActiveTab] = useState("chat");
+  const [kbRefreshKey, setKbRefreshKey] = useState(0);
+  const [theme, setTheme] = useState(getInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("aika_theme", theme);
+  }, [theme]);
+
+  const startNewConversation = () => {
+    resetSession(sessionId);
+    const next = crypto.randomUUID();
+    localStorage.setItem("aika_session_id", next);
+    setSessionId(next);
   };
-  
-  const askQuestion=async()=>{
-    if(!question.trim()){
-      return;
-    }
-    setLoading(true)
 
-    try{
-      const response= await fetch("http://127.0.0.1:8000/ask",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({question:question})
-      });
-
-      const data=await response.json();
-
-      if(!response.ok){
-        setAnswer(data.detail || "Something went wrong");
-        return;
-      }
-
-      setAnswer(data.answer);
-      setQuestion("");
-    
-    }catch(error){
-      setAnswer("Could not connect to backend")
-    }finally{
-      setLoading(false)
-    }
-  };
+  const bumpKbRefresh = () => setKbRefreshKey((key) => key + 1);
+  const toggleTheme = () => setTheme((current) => (current === "dark" ? "light" : "dark"));
 
   return (
-    <div className='app'>
-      <h1>AI Knowledge Assistant</h1>
-
-      <section className='card'> 
-        <h2>Upload Documents</h2>
-
-        <input
-         type="file"
-         onChange={(event)=>setFile(event.target.files[0])}
-        />
-
-        <button onClick={uploadFile} disabled={uploading}>
-          {uploading ? "Uplaoding...":"Upload"}
-        </button>
-
-        <p className='status'>{uploadMessage}</p>
-      </section>
-
-      <hr />
-
-      <section className='card'>
-        <h2>Ask a Question</h2>
-
-        <input
-         type="text"
-         value={question}
-         placeholder='Ask something from your document' 
-         onChange={(event)=>setQuestion(event.target.value)}
-         onKeyDown={(event)=>{
-          if(event.key=="Enter"){
-            askQuestion();
-          }
-         }
-        }
-        />
-
-        <button onClick={askQuestion} disabled={loading}>
-          {loading? "Generating...":"Ask"}
-          
-        </button>
-
-        <div className='answer-box'>
-        <h3>Answer</h3>
-        {loading ? <p>Generating answer...</p> : <p>{answer}</p>}
+    <div className="app">
+      <header className="app-header">
+        <div className="app-brand">
+          <span className="app-brand-mark">🎓</span>
+          <div>
+            <h1>Learning Assistant</h1>
+            <p className="app-tagline">Ask questions, get grounded answers from your course materials</p>
+          </div>
         </div>
-      </section>
+
+        <nav className="app-tabs">
+          <button
+            type="button"
+            className={activeTab === "chat" ? "app-tab app-tab-active" : "app-tab"}
+            onClick={() => setActiveTab("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            className={activeTab === "kb" ? "app-tab app-tab-active" : "app-tab"}
+            onClick={() => setActiveTab("kb")}
+          >
+            Knowledge base
+          </button>
+        </nav>
+
+        <div className="app-header-actions">
+          <button
+            type="button"
+            className="app-theme-toggle"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+
+          {activeTab === "chat" && (
+            <button type="button" className="app-new-chat" onClick={startNewConversation}>
+              + New conversation
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="app-main">
+        {activeTab === "chat" ? (
+          <ChatView key={sessionId} sessionId={sessionId} onDocumentsChanged={bumpKbRefresh} />
+        ) : (
+          <KnowledgeBase refreshKey={kbRefreshKey} onDocumentsChanged={bumpKbRefresh} />
+        )}
+      </main>
     </div>
   );
 }

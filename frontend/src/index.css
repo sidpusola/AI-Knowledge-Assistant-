@@ -10,10 +10,11 @@ body,
   min-height: 100%;
 }
 
+/* Colours live in App.css as theme variables so light/dark can swap them -
+   hardcoding them here would fight the dark theme and only work by
+   import-order luck. */
 body {
   min-width: 320px;
   min-height: 100vh;
-  background-color: #f4f6f8;
-  color: #1f2937;
-  font-family: Arial, sans-serif;
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
