@@ -1,17 +1,3 @@
-"""
-Central environment configuration for the AI Knowledge Assistant.
-
-Every value that used to be hardcoded across rag/, llm/, and app.py is
-defined here, with a sensible default and an override via .env / real
-environment variables. Nothing here requires extra dependencies -
-just the standard library - so it works regardless of what's installed
-in whichever Python environment ends up running the app.
-
-Usage:
-    from config import settings
-    settings.OLLAMA_MODEL
-"""
-
 import os
 from pathlib import Path
 
@@ -19,12 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def _load_dotenv(path: Path = BASE_DIR / ".env") -> None:
-    """Minimal .env loader (stdlib only).
-
-    Reads KEY=VALUE lines into os.environ. Real environment variables
-    (e.g. set by the shell or a deployment platform) always win - a
-    value already present in os.environ is never overwritten.
-    """
+    
     if not path.exists():
         return
 
@@ -68,23 +49,19 @@ def _get_list(name: str, default: str) -> list[str]:
 
 
 class Settings:
-    # --- LLM provider (used by llm/provider.py) ---
-    # Only "ollama" is supported - both models below are free, open-weight,
-    # and run locally, so routing between them costs nothing and needs no API key.
+    
     LLM_PROVIDER: str = _get_str("LLM_PROVIDER", "ollama")
 
     OLLAMA_TEMPERATURE: float = _get_float("OLLAMA_TEMPERATURE", 0.3)
 
-    # General-purpose model: used for longer / more complex questions.
     OLLAMA_MODEL: str = _get_str("OLLAMA_MODEL", "qwen2.5:7b")
 
-    # Fast model: used for short / simple questions, to avoid paying the
-    # larger model's load and inference cost when it isn't needed.
-    OLLAMA_MODEL_FAST: str = _get_str("OLLAMA_MODEL_FAST", "qwen3:4b")
+    # Keep this a non-reasoning model: qwen3:4b measured 4x slower here.
+    OLLAMA_MODEL_FAST: str = _get_str("OLLAMA_MODEL_FAST", "qwen2.5:3b")
 
-    # Routing heuristic: questions with <= this many words are considered
-    # "simple" and go to OLLAMA_MODEL_FAST; longer ones go to OLLAMA_MODEL.
     ROUTING_WORD_THRESHOLD: int = _get_int("ROUTING_WORD_THRESHOLD", 12)
+
+    REASONING_MODELS: list[str] = _get_list("REASONING_MODELS", "qwen3:4b")
 
     # --- Embeddings (used by rag/embeddings.py) ---
     EMBEDDING_MODEL: str = _get_str(

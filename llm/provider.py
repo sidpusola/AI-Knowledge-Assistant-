@@ -17,14 +17,7 @@ class LLMUnavailableError(Exception):
 
 
 def safe_invoke(chain, chain_input):
-    """Invoke an LCEL chain, translating known Ollama/network failures
-    into LLMUnavailableError.
-
-    Verified against the real failure modes (not guessed): pointing
-    ChatOllama at an unreachable port raises httpx.ConnectError, and
-    invoking a model that isn't pulled raises ollama.ResponseError with a
-    404. Both get normalized here into one clear, user-facing message.
-    """
+    
     try:
         return chain.invoke(chain_input)
     except (httpx.ConnectError, httpx.TimeoutException) as e:
@@ -39,10 +32,42 @@ def safe_invoke(chain, chain_input):
         ) from e
 
 
+def safe_stream(chain, chain_input):
+    
+    try:
+        yield from chain.stream(chain_input)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        raise LLMUnavailableError(
+            "Could not reach the local Ollama server. Is it running? "
+            "(try: ollama serve)"
+        ) from e
+    except OllamaResponseError as e:
+        raise LLMUnavailableError(
+            f"Ollama returned an error: {e}. Is the model pulled? "
+            "(try: ollama pull <model>)"
+        ) from e
+
+
+_THINK_END_TAG = "</think>"
+
+
+def strip_thinking(text: str) -> str:  #for leaked thinking
+    
+    if _THINK_END_TAG in text:
+        return text.split(_THINK_END_TAG, 1)[1].lstrip()
+    return text
+
+
 def _build_ollama(model: str) -> ChatOllama:
+    
+    kwargs = {}
+    if model in settings.REASONING_MODELS:
+        kwargs["reasoning"] = True
+
     return ChatOllama(
         model=model,
         temperature=settings.OLLAMA_TEMPERATURE,
+        **kwargs,
     )
 
 
@@ -67,34 +92,69 @@ def get_llm(model: str | None = None):
     return _build_ollama(model or settings.OLLAMA_MODEL)
 
 
-def is_simple_question(question: str) -> bool:
-    """Heuristic: a question with few words is considered "simple".
+# Question shapes that are nearly always a straight factual lookup.
+# Matched at the start of the question only - "what is X" opens a lookup,
+# but "tell me what is wrong with this design" is not one.
+_SIMPLE_OPENERS = (
+    "what is", "what are", "what does", "what do",
+    "define", "definition of",
+    "who is", "who was", "who are",
+    "when is", "when was", "when did",
+    "where is", "where are",
+    "list the", "name the",
+)
 
-    Word count is a crude proxy for complexity, but it's cheap, has no
-    extra dependency, and is good enough to decide between a fast small
-    model and a slower general-purpose one. Threshold is configurable
-    (ROUTING_WORD_THRESHOLD) since the right cutoff is something you'd
-    tune by watching real questions, not derive from theory.
+# Signals that real reasoning is needed no matter how short the question
+# is. These override the openers above: "what is the difference between
+# X and Y" opens like a lookup but isn't one.
+_COMPLEX_SIGNALS = (
+    "why", "how does", "how do ", "how would", "how can", "how should",
+    "explain", "compare", "contrast", "difference between",
+    "derive", "prove", "analyse", "analyze", "evaluate", "justify",
+    "design", "debug", "optimise", "optimize", "implement", "refactor",
+    "trade-off", "tradeoff", "pros and cons", "advantages and disadvantages",
+    "step by step", "in detail", "walk me through", "in your own words",
+)
+
+
+def is_simple_question(question: str) -> bool:
+    """Decide whether a question is a simple factual lookup.
+
+    Deliberately conservative: the default is the capable model, and a
+    question only gets diverted to the small one when it clearly looks
+    like a lookup. That asymmetry is intentional, because the two kinds
+    of mistake do not cost the same - measured on this machine, routing
+    an easy question to the big model costs about 0.9s, while routing a
+    hard one to the small model costs a noticeably worse answer.
+
+    Word count alone used to decide this, which got obvious cases
+    backwards: "Prove that P != NP" is 5 words but hard, while a wordy
+    "can you tell me what HTML stands for" is long but trivial. Length
+    measures verbosity, not difficulty, so it's now only a backstop.
     """
-    word_count = len(question.split())
-    return word_count <= settings.ROUTING_WORD_THRESHOLD
+    text = question.lower().strip()
+
+    # A reasoning signal anywhere wins, however short the question is.
+    if any(signal in text for signal in _COMPLEX_SIGNALS):
+        return False
+
+    # More than one question mark means multiple things are being asked.
+    if text.count("?") > 1:
+        return False
+
+    # Length is kept as a backstop only - a rambling question is more
+    # likely to be involved, and misjudging it merely costs ~0.9s.
+    if len(text.split()) > settings.ROUTING_WORD_THRESHOLD:
+        return False
+
+    # Nothing above ruled it out, so divert to the small model only if it
+    # actually opens like a lookup. Anything unrecognised stays on the
+    # capable model.
+    return text.startswith(_SIMPLE_OPENERS)
 
 
 def route_llm(question: str):
-    """Pick a chat model based on the question's complexity.
-
-    Short/simple questions ("what is HTML?") route to OLLAMA_MODEL_FAST
-    (qwen3:4b by default) - it loads and answers faster, and is enough
-    model for a short factual question. Longer/more complex questions
-    route to OLLAMA_MODEL (qwen2.5:7b by default) - more capable, worth
-    the extra load/inference time when the question actually needs it.
-
-    Both models are free, open-weight, and run locally via Ollama, and
-    both fit in VRAM together on this machine, so switching between just
-    these two never evicts the other - only the very first call to each
-    pays a real cold-load cost (~3s for the fast model, ~11s for the
-    general one); every call after that is warm.
-    """
+    
     provider = settings.LLM_PROVIDER.lower()
 
     if provider != "ollama":
