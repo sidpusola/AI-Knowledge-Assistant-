@@ -6,6 +6,7 @@ from langchain_core.runnables import RunnableLambda
 
 from rag.vectorstore import load_vectorstore
 from rag.retriever import get_retriever
+from rag.metadata import build_citations
 from llm.provider import route_llm, safe_invoke, safe_stream, strip_thinking
 from monitoring import Timer, record_request
 
@@ -61,26 +62,30 @@ def format_docs(docs):
     )
 
 
-_retriever=None
+_vectorstore=None
 
-def _get_cached_retriever():
-    """Build the retriever once per process instead of per request.
+def _get_cached_vectorstore():
+    """Load the vectorstore once per process instead of per request.
 
     load_vectorstore() reconstructs the HuggingFace embedding model every
     time it's called, which measured at ~8-10s per request - roughly 40%
     of total latency, entirely wasted repeat work. Chroma reads through to
     the same persisted directory, so a cached handle still sees documents
     uploaded later (verified by uploading and immediately querying).
+
+    The *vectorstore* is cached rather than the retriever, because each
+    request may want a different filter and as_retriever() is a cheap
+    wrapper - it's load_vectorstore() that costs.
     """
-    global _retriever
+    global _vectorstore
 
-    if _retriever is None:
-        _retriever=get_retriever(load_vectorstore())
+    if _vectorstore is None:
+        _vectorstore=load_vectorstore()
 
-    return _retriever
+    return _vectorstore
 
 
-def _prepare_chain(question:str):
+def _prepare_chain(question:str, category:str|None=None):
     """Retrieve context and pick a model for this question, returning a
     ready-to-run chain plus the context to feed it. Shared by both the
     non-streaming (ask_tutor) and streaming (stream_tutor) paths so
@@ -97,9 +102,15 @@ def _prepare_chain(question:str):
     # first call the embedding model load dominates, and leaving it
     # outside the timer made "total" look unexplainably larger than
     # retrieval + llm combined.
+    # A relevance floor applies (see rag/retriever.py), so this can
+    # legitimately come back empty when nothing in the corpus is a good
+    # match. That's intended: the prompt handles an empty context by
+    # answering from general knowledge and saying so, which is better
+    # than grounding in the nearest chunk of an irrelevant document.
     with Timer() as retrieval_timer:
-        retriever=_get_cached_retriever()
-        context=format_docs(retriever.invoke(question))
+        retriever=get_retriever(_get_cached_vectorstore(), category=category)
+        docs=retriever.invoke(question)
+        context=format_docs(docs)
 
     # llm is picked per-question - short/simple questions get the fast
     # model, longer/complex ones get the general-purpose model. See
@@ -107,13 +118,14 @@ def _prepare_chain(question:str):
     llm=route_llm(question)
 
     chain=prompt|llm|StrOutputParser()
-    return chain, context, llm.model, retrieval_timer.seconds
+    return chain, context, docs, llm.model, retrieval_timer.seconds
 
 
 def get_tutor_chain():
-    def answer_question(inputs:dict) -> str:
+    def answer_question(inputs:dict) -> dict:
         question=inputs["question"]
         history=inputs.get("history", [])
+        category=inputs.get("category")
 
         started=perf_counter()
         model="unknown"
@@ -122,7 +134,7 @@ def get_tutor_chain():
         error=None
 
         try:
-            chain, context, model, retrieval_seconds = _prepare_chain(question)
+            chain, context, docs, model, retrieval_seconds = _prepare_chain(question, category)
 
             with Timer() as llm_timer:
                 answer=safe_invoke(chain, {
@@ -132,7 +144,14 @@ def get_tutor_chain():
                 })
             llm_seconds=llm_timer.seconds
 
-            return strip_thinking(answer)
+            # Citations come from the chunks that actually went into the
+            # prompt (post-retrieval-gate, post-reranking) - not every
+            # candidate the retriever looked at, which the model never saw
+            # and would be a misleading citation.
+            return {
+                "answer":strip_thinking(answer),
+                "sources":build_citations(docs),
+            }
         except Exception as e:
             error=type(e).__name__
             raise
@@ -150,19 +169,37 @@ def get_tutor_chain():
 
     return RunnableLambda(answer_question)
 
-def ask_tutor(question:str, history:list|None=None):
+def ask_tutor(question:str, history:list|None=None, category:str|None=None) -> dict:
+     """Returns {"answer": str, "sources": list[str]}.
+
+     sources is a list of human-readable citations ("notes.pdf, page 3"),
+     one per distinct chunk actually used - empty when nothing cleared
+     the relevance gate and the answer came from general knowledge.
+     """
      chain=get_tutor_chain()
-     answer=chain.invoke({
+     return chain.invoke({
          "question":question,
-         "history":history or []
+         "history":history or [],
+         "category":category
      })
-     return answer
 
 
-def stream_tutor(question:str, history:list|None=None):
+def stream_tutor(
+    question:str,
+    history:list|None=None,
+    category:str|None=None,
+    sources:list|None=None,
+):
     """Yield the answer incrementally, chunk by chunk, instead of
     building the full string before returning anything - powers the
     /ask/stream endpoint so the UI can render tokens as they arrive.
+
+    Citations are known as soon as retrieval finishes, before the first
+    token is generated - but this is a generator that yields only text
+    chunks (the thing /ask/stream turns straight into SSE token events),
+    so there's no return value to carry them in. If a `sources` list is
+    passed in, it's populated as a side effect - the caller reads it back
+    after the generator is exhausted.
     """
     started=perf_counter()
     model="unknown"
@@ -171,7 +208,10 @@ def stream_tutor(question:str, history:list|None=None):
     error=None
 
     try:
-        chain, context, model, retrieval_seconds = _prepare_chain(question)
+        chain, context, docs, model, retrieval_seconds = _prepare_chain(question, category)
+
+        if sources is not None:
+            sources.extend(build_citations(docs))
 
         chunks=safe_stream(chain, {
             "context":context,
@@ -205,7 +245,9 @@ def stream_tutor(question:str, history:list|None=None):
 
 
 if __name__=="__main__":
-      answer=ask_tutor(
+      result=ask_tutor(
          "what is semantic HTML?"
       )
-      print(answer)
+      print(result["answer"])
+      print()
+      print("Sources:", result["sources"] or "(none - general knowledge)")

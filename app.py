@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI,UploadFile,HTTPException,File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -16,7 +17,31 @@ from monitoring import get_stats
 from config import settings
 
 
-app=FastAPI()
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    """Load the models at boot rather than on the first question.
+
+    The embedding model and the cross-encoder take a few seconds each to
+    build. Left lazy, that lands on whoever asks first - one student
+    waiting ~15s while everyone after waits ~85ms. Paying it at startup
+    moves the cost somewhere nobody is watching.
+    """
+    from rag.embeddings import get_embeddings
+    from rag.vectorstore import load_vectorstore
+
+    print("warming models...")
+    get_embeddings().embed_query("warmup")
+    load_vectorstore().similarity_search("warmup", k=1)
+
+    if settings.USE_RERANKER:
+        from rag.reranker import get_cross_encoder
+        get_cross_encoder().predict([("warmup", "warmup")])
+
+    print("models ready")
+    yield
+
+
+app=FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,6 +64,11 @@ MAX_HISTORY_MESSAGES=20  # keep memory bounded per session
 class QuestionRequest(BaseModel):
     question:str
     session_id:str|None=None
+    # Restrict retrieval to one subject, e.g. "life skills". None searches all.
+    category:str|None=None
+
+class UrlRequest(BaseModel):
+    url:str
 
 @app.get("/")
 def home():
@@ -68,7 +98,7 @@ def ask_question(request:QuestionRequest):
     history=SESSIONS.setdefault(session_id, [])
 
     try:
-        answer=ask_tutor(question, history)
+        result=ask_tutor(question, history, request.category)
     except LLMUnavailableError as e:
         # Ollama isn't running, or the configured model isn't pulled -
         # a client-side/deployment problem, not a bug in the request.
@@ -81,11 +111,12 @@ def ask_question(request:QuestionRequest):
             detail="Something went wrong while generating the answer."
         )
 
-    _record_turn(session_id, history, question, answer)
+    _record_turn(session_id, history, question, result["answer"])
 
     return {
         "question":question,
-        "answer":answer,
+        "answer":result["answer"],
+        "sources":result["sources"],
         "session_id":session_id
     }
 
@@ -109,8 +140,9 @@ def ask_question_stream(request:QuestionRequest):
         # 200 and can't change - so unlike /ask, a failure here is reported
         # as an "error" event inside the stream, not an HTTP error status.
         chunks=[]
+        sources=[]
         try:
-            for chunk in stream_tutor(question, history):
+            for chunk in stream_tutor(question, history, request.category, sources=sources):
                 chunks.append(chunk)
                 yield f"event: token\ndata: {json.dumps(chunk)}\n\n"
         except LLMUnavailableError as e:
@@ -123,7 +155,7 @@ def ask_question_stream(request:QuestionRequest):
         answer="".join(chunks)
         _record_turn(session_id, history, question, answer)
 
-        yield f"event: done\ndata: {json.dumps({'session_id': session_id})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'session_id': session_id, 'sources': sources})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -141,10 +173,80 @@ def stats():
     return get_stats()
 
 
+@app.post("/ingest-url")
+def ingest_url(request:UrlRequest):
+    url=request.url.strip()
+
+    if not url.lower().startswith(("http://","https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="URL must start with http:// or https://"
+        )
+
+    try:
+        chunk_count=ingest_document(url)
+    except Exception as e:
+        # Fetching a page fails in many more ways than reading a local
+        # file - DNS, timeouts, 404s, pages that are entirely JavaScript.
+        # Reported back rather than leaking a traceback.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not fetch or process '{url}': {type(e).__name__}: {e}"
+        )
+
+    if chunk_count==0:
+        return {
+            "url":url,
+            "message":"Page fetched, but no readable text was found "
+                      "(it may render its content with JavaScript) - nothing was indexed."
+        }
+
+    return {
+        "url":url,
+        "chunks":chunk_count,
+        "message":"Page fetched and indexed successfully"
+    }
+
+
 @app.get("/documents")
 def list_documents():
-    documents=sorted(p.name for p in UPLOAD_DIR.iterdir() if p.is_file())
-    return {"documents":documents}
+    """What is actually searchable, not what happens to be on disk.
+
+    This used to list files in uploads/, which was wrong in both
+    directions: a page ingested from a URL never appeared because it
+    isn't a file, and clearing the index still showed every PDF as
+    though students could ask about it.
+    """
+    from rag.service import service
+
+    return {"documents": service.list_documents()}
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document_endpoint(doc_id:str):
+    """Remove a document from the knowledge base.
+
+    Deletes the chunks, which is what makes it unsearchable. The original
+    file in uploads/ is left alone - deleting the user's upload is a
+    bigger decision than un-indexing it, and is not what this asks for.
+    """
+    from rag.service import service
+
+    document=service.get_document(doc_id)
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No indexed document with id '{doc_id}'"
+        )
+
+    removed=service.delete(doc_id)
+
+    return {
+        "doc_id":doc_id,
+        "filename":document["filename"],
+        "chunks_removed":removed,
+        "message":f"Removed '{document['filename']}' from the knowledge base"
+    }
 
 
 @app.post("/upload")
