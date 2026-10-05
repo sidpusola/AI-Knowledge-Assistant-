@@ -67,6 +67,7 @@ def _build_ollama(model: str) -> ChatOllama:
     return ChatOllama(
         model=model,
         temperature=settings.OLLAMA_TEMPERATURE,
+        num_ctx=settings.OLLAMA_NUM_CTX,
         **kwargs,
     )
 
