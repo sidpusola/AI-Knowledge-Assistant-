@@ -102,6 +102,11 @@ export async function listDocuments() {
   return parseJsonOrThrow(response);
 }
 
+export async function deleteDocument(docId) {
+  const response = await fetch(`${API_BASE}/documents/${docId}`, { method: "DELETE" });
+  return parseJsonOrThrow(response);
+}
+
 export async function resetSession(sessionId) {
   if (!sessionId) return;
   await fetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" }).catch(() => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listDocuments, uploadFile } from "../api.js";
+import { deleteDocument, listDocuments, uploadFile } from "../api.js";
 
 export default function KnowledgeBase({ refreshKey, onDocumentsChanged }) {
   // null = not loaded yet, so "loading" is derived from state rather than
@@ -8,6 +8,7 @@ export default function KnowledgeBase({ refreshKey, onDocumentsChanged }) {
   const [isUploading, setIsUploading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [pendingFile, setPendingFile] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   const refresh = async () => {
     try {
@@ -24,6 +25,29 @@ export default function KnowledgeBase({ refreshKey, onDocumentsChanged }) {
       await refresh();
     })();
   }, [refreshKey]);
+
+  const handleDelete = async (document) => {
+    // Removing material students rely on shouldn't be a single misclick.
+    const confirmed = window.confirm(
+      `Remove "${document.filename}" from the knowledge base?\n\n` +
+        `Students will no longer get answers from it. The uploaded file itself is kept.`
+    );
+    if (!confirmed) return;
+
+    setDeletingId(document.doc_id);
+    setStatusMessage("");
+
+    try {
+      const data = await deleteDocument(document.doc_id);
+      setStatusMessage(data.message);
+      await refresh();
+      onDocumentsChanged?.();
+    } catch (error) {
+      setStatusMessage(error.message || `Could not remove "${document.filename}".`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleUpload = async () => {
     if (!pendingFile) return;
@@ -82,10 +106,30 @@ export default function KnowledgeBase({ refreshKey, onDocumentsChanged }) {
           <p className="kb-empty">No materials yet — add your first document above.</p>
         ) : (
           <ul>
-            {documents.map((name) => (
-              <li key={name} className="kb-list-item">
-                <span className="kb-file-icon">📄</span>
-                <span className="kb-file-name">{name}</span>
+            {documents.map((document) => (
+              <li key={document.doc_id} className="kb-list-item">
+                <span className="kb-file-icon">
+                  {document.file_type === "web" ? "🌐" : "📄"}
+                </span>
+
+                <span className="kb-file-main">
+                  <span className="kb-file-name">{document.filename}</span>
+                  <span className="kb-file-meta">
+                    {document.category} · {document.chunks} chunk
+                    {document.chunks === 1 ? "" : "s"}
+                    {document.ingested_at ? ` · added ${document.ingested_at}` : ""}
+                  </span>
+                </span>
+
+                <button
+                  type="button"
+                  className="kb-remove"
+                  title={`Remove ${document.filename} from the knowledge base`}
+                  onClick={() => handleDelete(document)}
+                  disabled={deletingId === document.doc_id}
+                >
+                  {deletingId === document.doc_id ? "…" : "Remove"}
+                </button>
               </li>
             ))}
           </ul>

@@ -47,6 +47,17 @@ function Message({ message }) {
             >
               {message.content}
             </ReactMarkdown>
+
+            {message.sources?.length > 0 && (
+              <div className="chat-sources">
+                <span className="chat-sources-label">Sources</span>
+                {message.sources.map((source) => (
+                  <span key={source} className="chat-source-pill">
+                    {source}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -112,7 +123,15 @@ export default function ChatView({ sessionId, onDocumentsChanged }) {
       onToken: (chunk) => {
         if (chunk) appendToAssistant(chunk);
       },
-      onDone: () => {
+      onDone: (payload) => {
+        // Empty materials, not a stream failure - "hello" or a
+        // general-knowledge answer both finish with no sources.
+        if (assistantId !== null && payload?.sources?.length) {
+          const sources = payload.sources;
+          setMessages((prev) =>
+            prev.map((message) => (message.id === assistantId ? { ...message, sources } : message))
+          );
+        }
         setIsSending(false);
       },
       onError: (message) => {
