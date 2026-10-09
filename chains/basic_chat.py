@@ -5,11 +5,19 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 
-from llm.prompts import SYSTEM_PROMPT
-from llm.provider import route_llm, safe_invoke
+from llm.prompts import SMALL_TALK_PROMPT, SYSTEM_PROMPT
+from llm.provider import is_small_talk, route_llm, safe_invoke
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_PROMPT),
+    MessagesPlaceholder("history"),
+    ("human", "{question}"),
+])
+
+# Same shape, different system message - see llm/prompts.py for why this
+# is a separate prompt rather than a branch inside the main one.
+small_talk_prompt = ChatPromptTemplate.from_messages([
+    ("system", SMALL_TALK_PROMPT),
     MessagesPlaceholder("history"),
     ("human", "{question}"),
 ])
@@ -34,7 +42,11 @@ class BasicChat:
         llm = route_llm(question)
 
         structured_llm = llm.with_structured_output(TutorResponse)
-        chain = prompt | structured_llm
+
+        # Decided here rather than left to the model - a 3B gets this
+        # wrong when it's phrased as a condition in the system prompt.
+        active_prompt = small_talk_prompt if is_small_talk(question) else prompt
+        chain = active_prompt | structured_llm
 
         response = cast(TutorResponse, safe_invoke(chain, {
             "question": question,

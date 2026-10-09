@@ -50,6 +50,23 @@ def _get_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_path(name: str, default: str) -> str:
+    """A filesystem path, always absolute.
+
+    These used to be plain relative strings, which meant they resolved
+    against whatever directory the process happened to start in. Launch
+    uvicorn from anywhere but the project root and Chroma would create a
+    fresh, empty store next to you instead of opening the real one - no
+    error, just an assistant that had forgotten every document. It cost
+    an hour of debugging a retrieval "bug" that was a working directory.
+
+    An absolute value in the environment is still honoured as given, so
+    a deployment can point the store at a mounted volume.
+    """
+    raw = Path(os.getenv(name, default)).expanduser()
+    return str(raw if raw.is_absolute() else (BASE_DIR / raw).resolve())
+
+
 def _get_list(name: str, default: str) -> list[str]:
     raw = os.getenv(name, default)
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -60,6 +77,16 @@ class Settings:
     LLM_PROVIDER: str = _get_str("LLM_PROVIDER", "ollama")
 
     OLLAMA_TEMPERATURE: float = _get_float("OLLAMA_TEMPERATURE", 0.3)
+
+    # 127.0.0.1, not localhost. langchain-ollama defaults to
+    # "http://localhost:11434", and on this machine localhost resolves to
+    # the IPv6 ::1 while Ollama binds only to IPv4 127.0.0.1 - so every
+    # request tried ::1, waited out a ~2s TCP connect timeout, then
+    # retried over IPv4 and succeeded. Measured on /api/tags, which does
+    # no model work at all: 2056ms via localhost vs 19ms via 127.0.0.1.
+    # That ~2s was being paid by every LLM call in the app.
+    OLLAMA_BASE_URL: str = _get_str("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+
 
     # Context window per request - prompt, retrieved chunks, history and the
     # answer all share it. Ollama defaults to 4096 even though qwen2.5
@@ -99,7 +126,7 @@ class Settings:
     )
 
     # --- Vector store / retrieval (used by rag/vectorstore.py, rag/retriever.py) ---
-    CHROMA_DB_PATH: str = _get_str("CHROMA_DB_PATH", "./chroma_db")
+    CHROMA_DB_PATH: str = _get_path("CHROMA_DB_PATH", "chroma_db")
     RETRIEVER_K: int = _get_int("RETRIEVER_K", 3)
 
     # Relevance gating. See rag/retriever.py for the reasoning and the
@@ -128,6 +155,35 @@ class Settings:
     # How many candidates to score before deciding. Needs to be comfortably
     # more than RETRIEVER_K so the gap is measured against a real spread.
     RETRIEVER_CANDIDATES: int = _get_int("RETRIEVER_CANDIDATES", 10)
+
+    # "similarity" (plain top-k) or "mmr" (Maximum Marginal Relevance - trades
+    # some relevance for diversity among the results). Worth it specifically
+    # when the corpus has near-duplicate content: two versions of the same
+    # lecture PDF meant plain top-6 for "what is a data warehouse" returned
+    # the same 3 passages twice. MMR at lambda 0.5 returned 6/6 unique
+    # passages instead of 3/6. See rag/retriever.py.
+    RETRIEVAL_STRATEGY: str = _get_str("RETRIEVAL_STRATEGY", "similarity")
+
+    # How many candidates MMR considers before picking k diverse ones.
+    MMR_FETCH_K: int = _get_int("MMR_FETCH_K", 20)
+
+    # 0 = maximum diversity, 1 = plain relevance ranking (no diversity
+    # effect at all). 0.5 is the measured sweet spot on this corpus - 0.9
+    # still let through duplicate content, 0.5 and below didn't.
+    MMR_LAMBDA: float = _get_float("MMR_LAMBDA", 0.5)
+
+    # How many LLM-generated rephrasings to retrieve for, on top of the
+    # original question, when RETRIEVAL_STRATEGY="multi_query".
+    MULTI_QUERY_COUNT: int = _get_int("MULTI_QUERY_COUNT", 3)
+
+    # How many of RETRIEVER_CANDIDATES actually go through compression's
+    # one-LLM-call-per-chunk extraction, after a cheap cross-encoder pass
+    # narrows the field first. Measured on the known diluted html1.md
+    # chunk: it ranks 3rd of 10 by cross-encoder score despite failing the
+    # absolute threshold, so a shortlist of 4 keeps it in play while
+    # cutting LLM calls from 10 to 4 (~5x faster, confirmed to not change
+    # the outcome vs running all 10). See rag/compression.py.
+    COMPRESSION_CANDIDATES: int = _get_int("COMPRESSION_CANDIDATES", 4)
 
     # Cross-encoder reranking. Scores each candidate against the question
     # directly instead of comparing embeddings, which is what finally makes
@@ -165,7 +221,11 @@ class Settings:
     CHUNK_OVERLAP_TOKENS: int = _get_int("CHUNK_OVERLAP_TOKENS", 40)
 
     # --- Storage (used by app.py) ---
-    UPLOAD_DIR: str = _get_str("UPLOAD_DIR", "uploads")
+    UPLOAD_DIR: str = _get_path("UPLOAD_DIR", "uploads")
+
+    # Where thumbs up/down land. One JSON object per line, appended -
+    # see feedback.py for why that beats a table here.
+    FEEDBACK_PATH: str = _get_path("FEEDBACK_PATH", "feedback.jsonl")
 
     # --- API (used by app.py) ---
     CORS_ORIGINS: list[str] = _get_list(

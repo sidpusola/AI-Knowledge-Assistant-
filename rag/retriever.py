@@ -17,59 +17,13 @@ Limitation: this assumes one chunk should win. A question genuinely
 answered by several chunks equally looks flat and gets rejected.
 """
 
-import re
 import statistics
 
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 
 from config import settings
-
-# Greetings and pleasantries shouldn't reach the vector store at all. They
-# aren't just irrelevant - they score deceptively well, because a short
-# social phrase spikes against some arbitrary chunk. In the eval set
-# "thanks for your help" had a gap of 0.291, higher than almost every
-# genuine question, so the relevance gate waves it straight through.
-_SMALL_TALK = {
-    "hello", "hi", "hey", "yo", "hiya", "greetings",
-    "how are you", "how are you doing", "hows it going", "how is it going",
-    "whats up", "what's up",
-    "thanks", "thank you", "thanks a lot", "thank you so much", "cheers",
-    "good morning", "good afternoon", "good evening", "good night",
-    "bye", "goodbye", "see you", "see you later",
-    "ok", "okay", "cool", "nice", "great", "sure",
-    "can you help me", "can you help", "help me", "i need help",
-}
-
-# A real question in the text means it isn't small talk, however politely
-# it opens - "thanks, what is HTML?" must still retrieve.
-_QUESTION_MARKERS = {
-    "what", "how", "why", "when", "where", "which", "who", "whose",
-    "explain", "define", "describe", "list", "compare", "difference",
-    "tell", "show", "give", "is", "are", "does", "do", "can", "should",
-}
-
-_PLEASANTRY_OPENERS = (
-    "thanks", "thank you", "hello", "hi ", "hey ", "good morning",
-    "good afternoon", "good evening", "bye", "goodbye",
-)
-
-
-def is_small_talk(query: str) -> bool:
-    """True for greetings and pleasantries carrying no question."""
-    cleaned = re.sub(r"[^\w\s]", "", query.lower()).strip()
-
-    # Exact matches first, so "how are you" isn't caught by the "how"
-    # question marker below.
-    if cleaned in _SMALL_TALK:
-        return True
-
-    words = cleaned.split()
-
-    if any(word in _QUESTION_MARKERS for word in words):
-        return False
-
-    return len(words) <= 5 and cleaned.startswith(_PLEASANTRY_OPENERS)
+from llm.provider import is_small_talk
 
 
 def _build_filter(category: str | None, file_type: str | None) -> dict | None:
@@ -115,6 +69,54 @@ def relevance_gap(scores: list[float]) -> float:
     return scores[0] - statistics.mean(scores[1:])
 
 
+def _mmr_candidates(
+    vectorstore, query: str, where: dict | None
+) -> list[Document]:
+    """Diversity-aware candidates - no relevance scores come back from this,
+    which is why it's handled as its own branch in retrieve() rather than
+    folded into the scored similarity path below.
+    """
+    return vectorstore.max_marginal_relevance_search(
+        query,
+        k=settings.RETRIEVER_CANDIDATES,
+        fetch_k=settings.MMR_FETCH_K,
+        lambda_mult=settings.MMR_LAMBDA,
+        filter=where,
+    )
+
+
+def _multi_query_candidates(
+    vectorstore, query: str, where: dict | None
+) -> list[Document]:
+    """Candidates pooled from the original question plus a few LLM-generated
+    rephrasings, deduplicated by content. No relevance scores either - each
+    phrasing has its own, not comparable across phrasings without a
+    reranker to score them all against the one real question.
+    """
+    from rag.multi_query import generate_query_variants
+
+    pooled: dict[str, Document] = {}
+    for variant in generate_query_variants(query):
+        for doc in vectorstore.similarity_search(
+            variant, k=settings.RETRIEVER_CANDIDATES, filter=where
+        ):
+            pooled.setdefault(doc.page_content, doc)
+
+    return list(pooled.values())
+
+
+def _rerank_and_gate(query: str, candidates: list[Document], k: int) -> list[Document]:
+    """Shared by every strategy that produces unscored candidates (MMR,
+    multi-query): the cross-encoder is what actually judges them against
+    the real question, regardless of how they were gathered.
+    """
+    from rag.reranker import rerank
+
+    ranked = rerank(query, candidates)
+    kept = [doc for doc, score in ranked if score >= settings.RERANKER_SCORE_THRESHOLD]
+    return kept[:k]
+
+
 def retrieve(
     vectorstore,
     query: str,
@@ -122,6 +124,7 @@ def retrieve(
     category: str | None = None,
     file_type: str | None = None,
     k: int | None = None,
+    strategy: str | None = None,
 ) -> list[Document]:
     """Retrieve chunks, or nothing if none are convincingly relevant.
 
@@ -132,11 +135,55 @@ def retrieve(
         return []
 
     k = k or settings.RETRIEVER_K
+    strategy = strategy or settings.RETRIEVAL_STRATEGY
+    where = _build_filter(category, file_type)
+
+    if strategy in ("mmr", "multi_query"):
+        candidates = (
+            _mmr_candidates(vectorstore, query, where)
+            if strategy == "mmr"
+            else _multi_query_candidates(vectorstore, query, where)
+        )
+        if not candidates:
+            return []
+
+        if settings.USE_RERANKER:
+            return _rerank_and_gate(query, candidates, k)
+
+        # Neither strategy produces relevance scores of its own, so without
+        # a reranker there is no "is this actually relevant" signal here -
+        # just whatever came back. Known gap: an irrelevant query still
+        # returns k chunks in this combination.
+        return candidates[:k]
+
+    if strategy == "compression":
+        # The extraction step (does this chunk have anything relevant,
+        # yes/no) is itself the relevance judgement, but running it on all
+        # RETRIEVER_CANDIDATES means one LLM call per candidate - measured
+        # at ~0.3-0.85s each, ~4-8s per query. A cheap cross-encoder pass
+        # first narrows the field: the known diluted html1.md chunk ranks
+        # 3rd of 10 by cross-encoder score despite failing the absolute
+        # threshold, so a shortlist keeps it in play while cutting LLM
+        # calls from 10 to COMPRESSION_CANDIDATES - measured ~5x faster
+        # with no change in outcome. See rag/compression.py.
+        from rag.compression import compress_candidates
+        from rag.reranker import rerank
+
+        candidates = vectorstore.similarity_search(
+            query, k=settings.RETRIEVER_CANDIDATES, filter=where
+        )
+        if not candidates:
+            return []
+
+        ranked = rerank(query, candidates)
+        shortlist = [doc for doc, _ in ranked[: settings.COMPRESSION_CANDIDATES]]
+
+        return compress_candidates(query, shortlist)[:k]
 
     scored = vectorstore.similarity_search_with_relevance_scores(
         query,
         k=settings.RETRIEVER_CANDIDATES,
-        filter=_build_filter(category, file_type),
+        filter=where,
     )
 
     if not scored:
@@ -175,6 +222,7 @@ def get_retriever(
     category: str | None = None,
     file_type: str | None = None,
     k: int | None = None,
+    strategy: str | None = None,
 ):
     """Runnable wrapper so chains can use retrieve() with `|`.
 
@@ -183,7 +231,7 @@ def get_retriever(
     """
     def _run(query: str) -> list[Document]:
         return retrieve(
-            vectorstore, query, category=category, file_type=file_type, k=k
+            vectorstore, query, category=category, file_type=file_type, k=k, strategy=strategy
         )
 
     return RunnableLambda(_run)
@@ -218,4 +266,15 @@ if __name__ == "__main__":
             f"gap={relevance_gap(scores):6.3f}  -> {verdict}"
         )
         for document in kept:
+            print(f"        {describe(document)}")
+
+    print("\nsimilarity vs MMR - this corpus has two versions of the same")
+    print("data warehousing lecture, which plain top-k returns duplicates of:\n")
+
+    query = "what is a data warehouse"
+    for strategy in ("similarity", "mmr"):
+        docs = retrieve(vectorstore, query, strategy=strategy, k=6)
+        unique = len({d.page_content for d in docs})
+        print(f"  {strategy:11} -> {unique}/{len(docs)} chunks have distinct content")
+        for document in docs:
             print(f"        {describe(document)}")
