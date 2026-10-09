@@ -113,3 +113,30 @@ export async function resetSession(sessionId) {
     // best-effort - a failed cleanup call shouldn't block starting a new conversation
   });
 }
+
+/** Record a thumbs up/down on an answer.
+ *
+ * Deliberately swallows its own failures. A rating is diagnostic, not
+ * part of the product: if the request fails the student should not see
+ * an error for having tried to help, and the UI has already shown their
+ * choice. The server treats it the same way - see feedback.py.
+ */
+export async function sendFeedback({ sessionId, rating, question, answer, sources }) {
+  try {
+    await fetch(`${API_BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        rating,
+        question: (question || "").slice(0, 1000),
+        // Enough to recognise the answer later without storing an essay
+        // per vote; the server caps this too.
+        answer_excerpt: (answer || "").slice(0, 2000),
+        sources: sources || [],
+      }),
+    });
+  } catch {
+    // nothing useful to tell the student mid-conversation
+  }
+}

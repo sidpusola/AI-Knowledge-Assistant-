@@ -14,6 +14,7 @@ from chains.tutor_chain import ask_tutor, stream_tutor
 from rag.ingest import ingest_document
 from llm.provider import LLMUnavailableError
 from monitoring import get_stats
+from feedback import FeedbackRequest, FeedbackSummary, feedback_summary, record_feedback
 from config import settings
 
 
@@ -164,6 +165,26 @@ def ask_question_stream(request:QuestionRequest):
 def reset_session(session_id:str):
     SESSIONS.pop(session_id, None)
     return {"message":"Conversation reset"}
+
+
+@app.post("/feedback")
+def submit_feedback(request:FeedbackRequest):
+    """Record a thumbs up or down on an answer.
+
+    Fire-and-forget by design: it returns 200 whether or not the write
+    succeeded, because a student rating an answer should never see an
+    error for their trouble, and a lost rating costs nothing the system
+    depends on. Failures are logged (see feedback.py).
+    """
+    record_feedback(request)
+    return {"message":"Thanks for the feedback"}
+
+
+@app.get("/feedback/summary", response_model=FeedbackSummary)
+def feedback_stats():
+    """Counts, satisfaction rate, and how ratings split between grounded
+    and general-knowledge answers - the correlation worth watching."""
+    return feedback_summary()
 
 
 @app.get("/stats")

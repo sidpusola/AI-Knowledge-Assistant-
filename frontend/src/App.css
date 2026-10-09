@@ -695,3 +695,764 @@ body {
     padding: 20px 16px;
   }
 }
+
+/* --- Mermaid diagrams --------------------------------------------- */
+
+/* Mermaid emits an SVG with its own colours baked in, so the job here is
+   framing and sizing, not theming - the light/dark switch is handled by
+   re-rendering with mermaid's own theme (see MermaidDiagram.jsx). */
+.chat-diagram {
+  /* Shown whole, never scrolled: a flowchart you have to scroll is a
+     flowchart you can't read. The bubble grows instead. */
+  margin: 0.9rem 0;
+  padding: 1.1rem 0.9rem;
+  border-radius: 12px;
+  background: var(--color-code-bg);
+  /* No border - the bubble around it is already a frame, and two nested
+     outlines read as clutter. */
+  border: none;
+  overflow: visible;
+  text-align: center;
+}
+
+.chat-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Reserves a little height while the diagram is being drawn, so the
+   bubble doesn't jump when the SVG lands. */
+.chat-diagram-pending {
+  min-height: 2.5rem;
+}
+
+.chat-diagram-failed {
+  text-align: left;
+}
+
+.chat-diagram-note {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+/* Mermaid ships a raised, shadowed node style that reads as clutter next
+   to the flat surfaces everywhere else in this UI. Flatten it: no glow,
+   hairline borders, gently rounded corners. */
+.chat-diagram svg .node rect,
+.chat-diagram svg .node polygon,
+.chat-diagram svg .node circle,
+.chat-diagram svg .node path,
+.chat-diagram svg .cluster rect,
+.chat-diagram svg .label-container {
+  filter: none;
+  stroke-width: 1.2px;
+}
+
+/* rx/ry are presentation attributes, so CSS can round the corners
+   without touching the generated markup. */
+.chat-diagram svg .node rect,
+.chat-diagram svg .cluster rect {
+  rx: 7px;
+  ry: 7px;
+}
+
+.chat-diagram svg .edgePath path,
+.chat-diagram svg .flowchart-link {
+  stroke-width: 1.4px;
+}
+
+/* Subgraph titles sit closer to their group and read as labels, not
+   headings competing with the node text. */
+.chat-diagram svg .cluster-label text,
+.chat-diagram svg .cluster span {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+/* Mermaid sizes every node box by measuring its label at the font it was
+   configured with (14px, see MermaidDiagram.jsx). The label itself is an
+   HTML <div> inside a <foreignObject>, so it inherits from .chat-bubble -
+   which is 0.96rem / 15.36px. Rendering ~10% larger than it measured is
+   what pushed the last word out of the box ("Hatch into Larva" drawn as
+   "Hatch into Lar"). These rules pin rendered text to measured text; the
+   two must stay in step, so changing one means changing the other. */
+.chat-diagram,
+.chat-diagram svg,
+.chat-diagram svg foreignObject div,
+.chat-diagram svg .nodeLabel,
+.chat-diagram svg .edgeLabel,
+.chat-diagram svg .cluster-label,
+.chat-diagram svg text {
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.3;
+  letter-spacing: normal;
+}
+
+/* Belt and braces: if a measurement is ever off by a pixel or two, let
+   the text spill rather than be silently cut, and let an over-long token
+   ("Work/School") break instead of running past the edge. */
+.chat-diagram svg foreignObject {
+  overflow: visible;
+}
+
+.chat-diagram svg foreignObject div {
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+
+/* A bubble whose answer contains a diagram. Prose stays at 75% because a
+   long measure is tiring to read; a flowchart has the opposite problem,
+   so it is given most of the column. */
+.chat-bubble-wide {
+  max-width: 94%;
+  width: 100%;
+}
+
+/* Let the diagram use the bubble's full inner width rather than sitting
+   in a narrow central strip - it cancels the bubble's own side padding. */
+.chat-bubble-wide .chat-diagram {
+  margin-left: -16px;
+  margin-right: -16px;
+  padding-left: 1.2rem;
+  padding-right: 1.2rem;
+  border-radius: 10px;
+}
+
+/* === Diagram frame (shared by card and Mermaid modes) ============== */
+
+.flow-frame {
+  position: relative;
+  margin: 0.9rem 0;
+  padding: 0.9rem;
+  border-radius: 12px;
+  background: var(--color-code-bg);
+}
+
+/* Height follows the content, so a four-stage diagram is four stages
+   tall. The cap only engages for something genuinely large, and then it
+   scrolls inside its own box rather than pushing the conversation down
+   the page. */
+.flow-scroll {
+  max-height: 68vh;
+  overflow: auto;
+}
+
+.flow-scroll:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+/* Mermaid brings its own frame from the older styling; inside the shared
+   frame that would be a box in a box. */
+.flow-scroll > .chat-diagram {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+.flow-frame-failed {
+  text-align: left;
+}
+
+.flow-frame-note {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+/* --- toolbar ------------------------------------------------------- */
+
+.flow-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  /* Out of the way until wanted, but never fully hidden - a control that
+     only exists on hover is invisible on a touch screen. */
+  opacity: 0.35;
+  transition: opacity 120ms ease;
+  z-index: 1;
+}
+
+.flow-frame:hover .flow-toolbar,
+.flow-toolbar:focus-within {
+  opacity: 1;
+}
+
+.flow-toolbar-button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.flow-toolbar-button:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.flow-toolbar-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* A fullscreen element has no page behind it, so it needs its own. */
+.flow-frame:fullscreen {
+  display: grid;
+  place-content: center;
+  padding: 2rem;
+  background: var(--color-bg);
+  overflow: auto;
+}
+
+.flow-frame:fullscreen .flow-scroll {
+  max-height: none;
+}
+
+/* === Mode A: educational card flowchart ============================ */
+
+/* Role tints. Deliberately low-saturation: the colour is there to say
+   "this stage is different in kind", not to decorate. */
+:root {
+  --flow-start-bg: #eef7ef;
+  --flow-start-border: #cde2d1;
+  --flow-start-icon: #3d7a4c;
+  --flow-process-bg: #ffffff;
+  --flow-process-border: #e4dbcd;
+  --flow-process-icon: #8a7f72;
+  --flow-decision-bg: #fdf4e3;
+  --flow-decision-border: #eddcb9;
+  --flow-decision-icon: #a9741a;
+  --flow-end-bg: #eff2fb;
+  --flow-end-border: #d5ddf1;
+  --flow-end-icon: #4a5fa5;
+}
+
+:root[data-theme="dark"] {
+  --flow-start-bg: #15231a;
+  --flow-start-border: #2b4030;
+  --flow-start-icon: #7fcf96;
+  --flow-process-bg: #1a1a1a;
+  --flow-process-border: #303030;
+  --flow-process-icon: #9ca3af;
+  --flow-decision-bg: #272013;
+  --flow-decision-border: #463a1e;
+  --flow-decision-icon: #dfb45c;
+  --flow-end-bg: #171c2b;
+  --flow-end-border: #2e3755;
+  --flow-end-icon: #93a7e6;
+}
+
+.flow-cards {
+  margin: 0;
+  padding: 0;
+}
+
+.flow-cards-title {
+  margin: 0 0 0.75rem;
+  text-align: center;
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--color-text);
+}
+
+.flow-cards-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-cards-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.flow-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  max-width: 330px;
+  padding: 9px 13px;
+  border: 1px solid var(--flow-process-border);
+  border-radius: 10px;
+  background: var(--flow-process-bg);
+  text-align: left;
+}
+
+.flow-card-start   { background: var(--flow-start-bg);    border-color: var(--flow-start-border); }
+.flow-card-decision{ background: var(--flow-decision-bg); border-color: var(--flow-decision-border); }
+.flow-card-end     { background: var(--flow-end-bg);      border-color: var(--flow-end-border); }
+
+.flow-card-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--flow-process-icon);
+}
+
+.flow-card-start .flow-card-icon    { color: var(--flow-start-icon); }
+.flow-card-decision .flow-card-icon { color: var(--flow-decision-icon); }
+.flow-card-end .flow-card-icon      { color: var(--flow-end-icon); }
+
+.flow-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.flow-card-label {
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--color-text);
+}
+
+.flow-card-description {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.flow-cards-connector {
+  display: grid;
+  place-items: center;
+  height: 20px;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+.flow-cards-repeat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0.6rem 0 0;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+}
+
+/* Horizontal layout: the same cards in a row, wrapping on narrow
+   screens rather than overflowing. */
+.flow-cards-horizontal .flow-cards-list {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.flow-cards-horizontal .flow-cards-item {
+  flex-direction: row;
+  align-items: center;
+  width: auto;
+}
+
+.flow-cards-horizontal .flow-cards-connector {
+  height: auto;
+  width: 22px;
+}
+
+.flow-cards-horizontal .flow-card {
+  max-width: 220px;
+}
+
+@media (max-width: 560px) {
+  .flow-card {
+    max-width: none;
+  }
+  .flow-cards-horizontal .flow-cards-list {
+    flex-direction: column;
+  }
+  .flow-cards-horizontal .flow-cards-item {
+    flex-direction: column;
+    width: 100%;
+  }
+  .flow-cards-horizontal .flow-cards-connector {
+    height: 20px;
+    width: auto;
+  }
+}
+
+/* --- diagram placeholder (shown while the answer is streaming) ----- */
+
+.flow-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Roughly the height of a small diagram, so the bubble doesn't jolt
+     when the real thing arrives. */
+  min-height: 76px;
+  margin: 0.9rem 0;
+  padding: 0 1rem;
+  border-radius: 12px;
+  background: var(--color-code-bg);
+}
+
+.flow-placeholder-text {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+/* A single travelling bar: enough to say "working", without the busy
+   look of a spinner next to streaming text that is already moving. */
+.flow-placeholder-bar {
+  position: relative;
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.flow-placeholder-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--color-accent);
+  animation: flow-placeholder-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes flow-placeholder-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Respect a reduced-motion preference: keep the cue, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .flow-placeholder-bar::after {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* === Mode A2: circular cycle ======================================= */
+
+.flow-cycle { margin: 0; padding: 0; }
+
+.flow-cycle-title,
+.flow-timeline-title {
+  margin: 0 0 0.7rem;
+  text-align: center;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+/* Square, so the SVG's uniform scaling keeps the ring round and the
+   arrowheads undistorted. */
+.flow-cycle-stage {
+  position: relative;
+  /* Sized so a chip at the edge of the ring still has its full width
+     inside the box - radius 34% of 420px is 143px, plus half a 128px
+     chip is 207px, against a 210px half-box. */
+  /* Width is set inline per diagram; this is the ceiling. */
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 0 auto;
+}
+
+.flow-cycle-arcs {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+}
+
+.flow-cycle-nodes {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-cycle-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  /* Must match CHIP in CycleDiagram.jsx - the ring radius is computed
+     from it, so the two cannot drift apart. */
+  width: 116px;
+  padding: 7px 9px;
+  border: 1px solid var(--flow-process-border);
+  border-radius: 10px;
+  background: var(--flow-process-bg);
+  text-align: center;
+}
+
+.flow-cycle-icon { color: var(--flow-process-icon); line-height: 1; }
+
+.flow-cycle-label {
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--color-text);
+}
+
+.flow-cycle-description {
+  font-size: 0.68rem;
+  line-height: 1.3;
+  color: var(--color-text-muted);
+  /* Two lines at most: a chip on a ring has no room to grow, and the
+     prose around the diagram carries the detail. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The ring needs width. Below this the chips would overlap, so the
+   stages stack instead - still in order, still readable. */
+@media (max-width: 520px) {
+  .flow-cycle-stage { aspect-ratio: auto; height: auto; }
+  .flow-cycle-arcs { display: none; }
+  .flow-cycle-nodes {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .flow-cycle-node {
+    position: static;
+    transform: none;
+    width: 100%;
+  }
+}
+
+/* === Mode A3: timeline ============================================= */
+
+.flow-timeline { margin: 0; padding: 0; }
+
+.flow-timeline-list {
+  position: relative;
+  margin: 0;
+  padding: 0 0 0 26px;
+  list-style: none;
+}
+
+/* The spine, drawn behind the markers. */
+.flow-timeline-list::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 6px;
+  bottom: 6px;
+  width: 1.5px;
+  border-radius: 1px;
+  background: var(--color-border);
+}
+
+.flow-timeline-item {
+  position: relative;
+  padding: 0 0 14px;
+}
+
+.flow-timeline-item:last-child { padding-bottom: 0; }
+
+.flow-timeline-marker {
+  position: absolute;
+  left: -26px;
+  top: 1px;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border: 1px solid var(--flow-process-border);
+  border-radius: 50%;
+  background: var(--flow-process-bg);
+  color: var(--flow-process-icon);
+}
+
+.flow-timeline-item.flow-card-start .flow-timeline-marker {
+  background: var(--flow-start-bg);
+  border-color: var(--flow-start-border);
+  color: var(--flow-start-icon);
+}
+
+.flow-timeline-item.flow-card-end .flow-timeline-marker {
+  background: var(--flow-end-bg);
+  border-color: var(--flow-end-border);
+  color: var(--flow-end-icon);
+}
+
+.flow-timeline-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.flow-timeline-body { display: flex; flex-direction: column; gap: 1px; }
+
+.flow-timeline-label {
+  font-size: 0.855rem;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.flow-timeline-description {
+  font-size: 0.775rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+/* === Diagram themes ================================================ */
+
+/* "minimal" is the default already defined with the card styles. The
+   others re-point the same four role tints, so every renderer - cards,
+   ring, timeline and the Mermaid classDefs - shifts together. */
+
+.flow-theme-biology {
+  --flow-start-bg: #eef7ef;  --flow-start-border: #cce3d0;  --flow-start-icon: #3f7d4e;
+  --flow-process-bg: #f6fbf6; --flow-process-border: #d9e9db; --flow-process-icon: #5c8f66;
+  --flow-decision-bg: #fdf6e4; --flow-decision-border: #ecdcb6; --flow-decision-icon: #a67c1d;
+  --flow-end-bg: #eaf4ee;    --flow-end-border: #c9e0d2;    --flow-end-icon: #35705a;
+}
+
+:root[data-theme="dark"] .flow-theme-biology {
+  --flow-start-bg: #14241a;  --flow-start-border: #2c4232;  --flow-start-icon: #82d199;
+  --flow-process-bg: #121c15; --flow-process-border: #25382a; --flow-process-icon: #7fb98d;
+  --flow-decision-bg: #261f12; --flow-decision-border: #45391d; --flow-decision-icon: #dcb25c;
+  --flow-end-bg: #13241d;    --flow-end-border: #27443a;    --flow-end-icon: #6ec7a6;
+}
+
+.flow-theme-technical {
+  --flow-start-bg: #eef3fb;  --flow-start-border: #d3deef;  --flow-start-icon: #3f63a8;
+  --flow-process-bg: #f5f7fa; --flow-process-border: #dfe4ec; --flow-process-icon: #64748b;
+  --flow-decision-bg: #fdf2f2; --flow-decision-border: #eed6d6; --flow-decision-icon: #a85050;
+  --flow-end-bg: #eef7f8;    --flow-end-border: #cfe5e8;    --flow-end-icon: #33757f;
+}
+
+:root[data-theme="dark"] .flow-theme-technical {
+  --flow-start-bg: #141b29;  --flow-start-border: #2a3650;  --flow-start-icon: #8aa6e0;
+  --flow-process-bg: #16181d; --flow-process-border: #2b2f38; --flow-process-icon: #93a0b4;
+  --flow-decision-bg: #251616; --flow-decision-border: #452a2a; --flow-decision-icon: #e08c8c;
+  --flow-end-bg: #12212374;  --flow-end-border: #27454a;    --flow-end-icon: #6fc2cc;
+}
+
+.flow-theme-education {
+  --flow-start-bg: #f3effb;  --flow-start-border: #ded3f1;  --flow-start-icon: #6a4ca8;
+  --flow-process-bg: #fcfaff; --flow-process-border: #e8e2f3; --flow-process-icon: #7d72a0;
+  --flow-decision-bg: #fff4e8; --flow-decision-border: #f2ddc3; --flow-decision-icon: #b2701f;
+  --flow-end-bg: #fdeef4;    --flow-end-border: #f2d3e0;    --flow-end-icon: #a8457a;
+}
+
+:root[data-theme="dark"] .flow-theme-education {
+  --flow-start-bg: #1b1628;  --flow-start-border: #352a4d;  --flow-start-icon: #b39ce8;
+  --flow-process-bg: #17151d; --flow-process-border: #2d2838; --flow-process-icon: #a397c2;
+  --flow-decision-bg: #281d12; --flow-decision-border: #4a371f; --flow-decision-icon: #e0a45c;
+  --flow-end-bg: #261522;    --flow-end-border: #46283b;    --flow-end-icon: #e08ab6;
+}
+
+/* --- diagram text sizing fixes ------------------------------------- */
+
+/* The frame states its own font. Diagrams used to inherit <pre>'s
+   monospace default; the wrapper is gone now, but a diagram should
+   never depend on what it happens to sit inside. */
+.flow-frame {
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* A flex child's min-width is auto, so a long label refuses to shrink
+   below its own max-content width and spills out of the chip instead of
+   wrapping. These let it wrap, and break a word that is wider than the
+   chip on its own. */
+.flow-cycle-node,
+.flow-cycle-label,
+.flow-cycle-description,
+.flow-card-body,
+.flow-card-label,
+.flow-card-description,
+.flow-timeline-body,
+.flow-timeline-label,
+.flow-timeline-description {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+/* --- answer feedback ----------------------------------------------- */
+
+.msg-feedback {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  /* Present but quiet. A rating prompt that competes with the answer
+     gets clicked by reflex, which is worse than not asking. */
+  opacity: 0.45;
+  transition: opacity 120ms ease;
+}
+
+.chat-bubble-assistant:hover .msg-feedback,
+.msg-feedback:focus-within,
+.msg-feedback:has(.is-chosen) {
+  opacity: 1;
+}
+
+.msg-feedback-label {
+  margin-right: 2px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+.msg-feedback-button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.msg-feedback-button:hover {
+  background: var(--color-code-bg);
+  color: var(--color-text);
+}
+
+.msg-feedback-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.msg-feedback-button.is-chosen {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
