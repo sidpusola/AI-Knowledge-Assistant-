@@ -1,12 +1,21 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI,UploadFile,HTTPException,File
+from fastapi import Depends,FastAPI,UploadFile,HTTPException,File,Request,Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse,StreamingResponse
 from pydantic import BaseModel
 from pathlib import Path
 from uuid import uuid4
 import json
+import logging
 import shutil
+
+import httpx
+
+
+def httpx_query(params:dict) -> str:
+    """Query string with values escaped - an error message from
+    Google can contain spaces and punctuation."""
+    return str(httpx.QueryParams(params))
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -15,7 +24,14 @@ from rag.ingest import ingest_document
 from llm.provider import LLMUnavailableError
 from monitoring import get_stats
 from feedback import FeedbackRequest, FeedbackSummary, feedback_summary, record_feedback
+import auth
+from database.store import (
+    complete_profile, delete_session, init_db, list_sessions,
+    load_transcript, user_stats,
+)
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -27,8 +43,18 @@ async def lifespan(app:FastAPI):
     waiting ~15s while everyone after waits ~85ms. Paying it at startup
     moves the cost somewhere nobody is watching.
     """
+    # uvicorn configures its own loggers but not the root one, so
+    # anything this app logs - [auth], [db], [rewrite], [diagram] -
+    # would otherwise go nowhere.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s:     %(message)s",
+    )
+
     from rag.embeddings import get_embeddings
     from rag.vectorstore import load_vectorstore
+
+    init_db()
 
     print("warming models...")
     get_embeddings().embed_query("warmup")
@@ -165,6 +191,161 @@ def ask_question_stream(request:QuestionRequest):
 def reset_session(session_id:str):
     SESSIONS.pop(session_id, None)
     return {"message":"Conversation reset"}
+
+
+class ProfileRequest(BaseModel):
+    display_name:str
+    # ISO "YYYY-MM-DD", or omitted. Validated in auth.parse_dob.
+    date_of_birth:str|None=None
+
+
+@app.get("/auth/status")
+def auth_status():
+    """Whether Google sign-in is set up on this server.
+
+    The frontend asks this before showing a sign-in button, so a missing
+    client ID reads as "not configured yet" rather than a broken button.
+    """
+    return {"configured":auth.is_configured()}
+
+
+@app.get("/auth/google/login")
+def google_login(request:Request):
+    """Send the browser to Google's account chooser.
+
+    First make sure we are on the host Google will return to. The CSRF
+    state lives in a cookie, cookies are scoped by host, and a browser
+    treats localhost and 127.0.0.1 as different hosts - so starting
+    here on one and coming back on the other loses the cookie, and the
+    callback can only say invalid_state. Bouncing to the canonical host
+    first means that cannot happen, whichever address was typed.
+    """
+    try:
+        expected=auth.callback_host()
+    except auth.AuthNotConfigured as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+    if request.url.netloc != expected:
+        return RedirectResponse(str(request.url.replace(netloc=expected)), status_code=307)
+
+    try:
+        url,state=auth.build_login_url()
+    except auth.AuthNotConfigured as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+    response=RedirectResponse(url, status_code=307)
+    auth.set_state_cookie(response, state)
+    return response
+
+
+@app.get("/auth/google/callback")
+async def google_callback(request:Request, code:str|None=None,
+                          state:str|None=None, error:str|None=None):
+    """Where Google sends the browser back.
+
+    Always ends in a redirect to the app rather than a JSON body - a
+    person is looking at this URL, not a script. Failures come back as
+    ?auth_error= so the UI can say what went wrong.
+    """
+    def back(**params) -> RedirectResponse:
+        target=settings.FRONTEND_URL
+        if params:
+            target=f"{target}?{httpx_query(params)}"
+        response=RedirectResponse(target, status_code=303)
+        auth.clear_state_cookie(response)
+        return response
+
+    if error:
+        # The usual one is the student pressing Cancel.
+        return back(auth_error=error)
+
+    returned_cookie=request.cookies.get("aika_oauth_state")
+    # Which of the two failure modes happened matters: a missing cookie
+    # is a browser that didn't send it back (an embedded webview, or a
+    # sign-in begun on another host); a present-but-rejected one is a
+    # stale or forged value. They are fixed differently, so say which.
+    logger.info(
+        "[auth] callback: state=%s cookie=%s cookies_seen=%s",
+        "present" if state else "missing",
+        "present" if returned_cookie else "MISSING",
+        list(request.cookies.keys()) or "none",
+    )
+
+    if not auth.verify_state(state, returned_cookie):
+        # Nearly always a lost cookie rather than an attack: a sign-in
+        # begun on a different host, or left open past the ten-minute
+        # window. Both are fixed by starting again.
+        return back(auth_error="Sign-in expired or was started elsewhere. Please try again.")
+
+    if not code:
+        return back(auth_error="missing_code")
+
+    try:
+        user=await auth.exchange_code_for_user(code)
+    except auth.AuthNotConfigured:
+        return back(auth_error="not_configured")
+    except HTTPException as e:
+        return back(auth_error=str(e.detail))
+
+    response=back(signed_in="1")
+    auth.issue_session(response, user.id)
+    return response
+
+
+@app.get("/auth/me")
+def auth_me(request:Request):
+    """The signed-in user, or null. Never 401s: the frontend calls this
+    on load to decide which screen to show."""
+    user=auth.current_user(request)
+    return {"user":auth.public_user(user) if user else None}
+
+
+@app.post("/auth/profile")
+def save_profile(request:ProfileRequest, user=Depends(auth.require_user)):
+    """The name and date of birth asked for after the first sign-in."""
+    name=request.display_name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Please enter a name.")
+
+    updated=complete_profile(user.id, name, auth.parse_dob(request.date_of_birth))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"user":auth.public_user(updated)}
+
+
+@app.post("/auth/logout")
+def logout(response:Response):
+    auth.clear_session(response)
+    return {"message":"Signed out"}
+
+
+@app.get("/me/sessions")
+def my_sessions(user=Depends(auth.require_user)):
+    """This user's conversations, newest first."""
+    return {"sessions":list_sessions(user.id)}
+
+
+@app.get("/me/sessions/{session_id}")
+def my_session(session_id:str, user=Depends(auth.require_user)):
+    """One conversation in full, so it can be reopened."""
+    messages=load_transcript(session_id, user.id)
+    if not messages:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    return {"session_id":session_id, "messages":messages}
+
+
+@app.delete("/me/sessions/{session_id}")
+def delete_my_session(session_id:str, user=Depends(auth.require_user)):
+    if not delete_session(session_id, user.id):
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    return {"message":"Conversation deleted"}
+
+
+@app.get("/me/stats")
+def my_stats(user=Depends(auth.require_user)):
+    """Activity for this student - sessions, questions, first and last
+    seen. The per-user view the NGO needs for reporting."""
+    return user_stats(user.id)
 
 
 @app.post("/feedback")

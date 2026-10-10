@@ -8,3 +8,14 @@ chroma_db/
 
 # Student ratings - runtime data, not source
 feedback.jsonl
+
+# User accounts and chat history - runtime data
+database/*.db
+database/*.db-wal
+database/*.db-shm
+
+# Any .env variant - backups, .env.local, .env.production.
+# Only .env was ignored before, so a .env.backup-* would have been
+# committed with live credentials in it.
+.env.*
+!.env.example

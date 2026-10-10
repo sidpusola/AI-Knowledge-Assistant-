@@ -227,6 +227,49 @@ class Settings:
     # see feedback.py for why that beats a table here.
     FEEDBACK_PATH: str = _get_path("FEEDBACK_PATH", "feedback.jsonl")
 
+    # --- Users, sessions and history (used by database/) ---
+    # SQLite because this runs as one process on one box next to the GPU,
+    # so the single-writer limit costs nothing and there is no server to
+    # operate. Declared as a SQLAlchemy URL rather than a path so moving
+    # to Postgres later is a config change, not a rewrite.
+    DATABASE_URL: str = _get_str(
+        "DATABASE_URL", f"sqlite:///{(BASE_DIR / 'database' / 'app.db').as_posix()}"
+    )
+
+    # How many past turns of a conversation are replayed into the prompt.
+    # The full history is kept in the database; this only bounds what the
+    # model is asked to read.
+    HISTORY_TURNS: int = _get_int("HISTORY_TURNS", 10)
+
+    # --- Google sign-in (used by auth.py) ---
+    # Created by you in Google Cloud Console; see the README. Empty by
+    # default so the app still starts without them - the auth endpoints
+    # report that they are unconfigured instead of the server failing
+    # to boot.
+    GOOGLE_CLIENT_ID: str = _get_str("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = _get_str("GOOGLE_CLIENT_SECRET", "")
+
+    # Must match an Authorised redirect URI on the OAuth client exactly,
+    # character for character - Google compares the whole string.
+    OAUTH_REDIRECT_URI: str = _get_str(
+        "OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/auth/google/callback"
+    )
+
+    # Where to send the browser once sign-in succeeds.
+    FRONTEND_URL: str = _get_str("FRONTEND_URL", "http://localhost:5173")
+
+    # Signs the login cookie. A random default means restarting the
+    # server logs everyone out, which is the safe failure: the unsafe
+    # one would be a fixed well-known key that anyone could forge
+    # cookies with. Set it in .env to keep people signed in.
+    SESSION_SECRET: str = _get_str("SESSION_SECRET", "")
+    SESSION_COOKIE: str = _get_str("SESSION_COOKIE", "aika_session")
+    SESSION_MAX_AGE: int = _get_int("SESSION_MAX_AGE", 60 * 60 * 24 * 14)
+
+    # Send the cookie only over HTTPS. False for local development,
+    # which is plain http; MUST be true wherever this is deployed.
+    COOKIE_SECURE: bool = _get_bool("COOKIE_SECURE", False)
+
     # --- API (used by app.py) ---
     CORS_ORIGINS: list[str] = _get_list(
         "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
