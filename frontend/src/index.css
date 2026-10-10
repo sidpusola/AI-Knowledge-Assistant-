@@ -16,5 +16,5 @@ body,
 body {
   min-width: 320px;
   min-height: 100vh;
-  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
 }

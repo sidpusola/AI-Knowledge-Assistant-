@@ -1,0 +1,106 @@
+/* Design tokens — pine and marigold on cool paper.
+ *
+ * Taken from the design mockup. One change from it: the mockup scopes
+ * dark mode with a `.dark` class, this app already sets
+ * <html data-theme="dark"> from App.jsx and persists it, so the dark
+ * block is keyed on that instead. Same values, existing toggle.
+ *
+ * Archivo carries headings and numerals (a wayfinding grotesque - it
+ * holds up at 38px on a stat tile), Hanken Grotesk carries reading text.
+ */
+
+:root {
+  --paper:        #F1F4F3;
+  --card:         #FFFFFF;
+  --sunk:         #E8EDEB;
+  --ink:          #0F1F1D;
+  --ink-2:        #2C403D;
+  --muted:        #637A76;
+  --faint:        #8EA3A0;
+  --line:         #DBE4E2;
+  --line-strong:  #C3D1CE;
+
+  --pine:         #0C5C52;
+  --pine-2:       #12998A;
+  --pine-wash:    #E2EEEB;
+  --pine-edge:    #B6D5CE;
+
+  --marigold:     #D98A0B;
+  --marigold-2:   #F0A92A;
+  --marigold-wash:#FBF0DA;
+  --marigold-edge:#EBD3A0;
+
+  --rose:         #AF4038;
+  --rose-wash:    #F8E8E6;
+
+  --r-chip: 999px;
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+
+  --shadow-lift: 0 10px 30px -14px rgb(15 31 29 / 28%), 0 2px 6px -2px rgb(15 31 29 / 8%);
+
+  --font-display: "Archivo", system-ui, sans-serif;
+  --font-body: "Hanken Grotesk", system-ui, sans-serif;
+}
+
+:root[data-theme="dark"] {
+  --paper:        #0B1413;
+  --card:         #13211F;
+  --sunk:         #0F1B1A;
+  --ink:          #E9F1EF;
+  --ink-2:        #C4D5D1;
+  --muted:        #8DA5A0;
+  --faint:        #6B837F;
+  --line:         #203330;
+  --line-strong:  #2C443F;
+
+  --pine:         #2FBFAC;
+  --pine-2:       #41D3BE;
+  --pine-wash:    #112B27;
+  --pine-edge:    #1E463F;
+
+  --marigold:     #F0A92A;
+  --marigold-2:   #FFC257;
+  --marigold-wash:#2A2112;
+  --marigold-edge:#4A3A1A;
+
+  --rose:         #E8796E;
+  --rose-wash:    #2B1716;
+
+  --shadow-lift: 0 12px 34px -16px rgb(0 0 0 / 70%), 0 2px 6px -2px rgb(0 0 0 / 40%);
+}
+
+/* The diagram renderers read these four role tints. Re-pointed at the
+ * pine/marigold palette so a flowchart belongs to the same product as
+ * the page around it. */
+:root {
+  --flow-start-bg: var(--pine-wash);
+  --flow-start-border: var(--pine-edge);
+  --flow-start-icon: var(--pine);
+  --flow-process-bg: var(--card);
+  --flow-process-border: var(--line-strong);
+  --flow-process-icon: var(--muted);
+  --flow-decision-bg: var(--marigold-wash);
+  --flow-decision-border: var(--marigold-edge);
+  --flow-decision-icon: var(--marigold);
+  --flow-end-bg: var(--sunk);
+  --flow-end-border: var(--line-strong);
+  --flow-end-icon: var(--ink-2);
+
+  /* Older component styles still reference these names. */
+  --color-bg: var(--paper);
+  --color-surface: var(--card);
+  --color-text: var(--ink);
+  --color-text-muted: var(--muted);
+  --color-border: var(--line);
+  --color-code-bg: var(--sunk);
+  --color-accent: var(--pine);
+  --color-accent-soft: var(--pine-wash);
+  --color-error: var(--rose);
+  --color-error-soft: var(--rose-wash);
+  --color-primary: var(--pine);
+  --radius-sm: var(--r-sm);
+  --radius-lg: var(--r-lg);
+}

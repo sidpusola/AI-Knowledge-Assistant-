@@ -12,7 +12,7 @@ import {
 // in another - which clipped longer labels ("Hatch into Larva" rendered
 // as "Hatch into Lar"). The app's real stack has to be named here.
 const FONT_STACK =
-  '-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  '"Hanken Grotesk", system-ui, sans-serif';
 
 // theme "base" + explicit variables, rather than the built-in "default"
 // and "dark" themes: those bring their own palette and a raised, shadowed

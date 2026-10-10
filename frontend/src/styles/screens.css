@@ -1,0 +1,308 @@
+/* The two screens that exist: Ask and Documents. */
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.spin { animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* ============================================================
+   Ask — opening state
+   ============================================================ */
+
+.opening { max-width: 760px; margin: 0 auto; padding-top: 48px; }
+
+.greet-unit {
+  display: inline-flex; align-items: center; gap: 8px; margin-bottom: 15px;
+  font: 600 12.5px/1 var(--font-body); color: var(--pine);
+  background: var(--pine-wash); border: 1px solid var(--pine-edge);
+  padding: 6px 12px; border-radius: var(--r-chip);
+}
+.greet-unit svg { width: 14px; height: 14px; }
+
+.greet {
+  font: 800 36px/1.12 var(--font-display); letter-spacing: -.035em;
+  margin: 0 0 12px;
+}
+.greet-sub {
+  font: 400 16px/1.6 var(--font-body); color: var(--muted);
+  margin: 0 0 28px; max-width: 56ch;
+}
+.starters { display: flex; flex-wrap: wrap; gap: 9px; }
+
+/* ============================================================
+   Ask — the conversation
+   ============================================================ */
+
+.chat-scroll {
+  display: flex; flex-direction: column; gap: 22px;
+  margin: 0; padding: 0; list-style: none;
+}
+
+.msg-user { align-self: flex-end; max-width: 60%; }
+.msg-user .bubble {
+  background: var(--pine); color: #fff; padding: 12px 17px;
+  border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg);
+  font: 400 15px/1.5 var(--font-body);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+:root[data-theme="dark"] .msg-user .bubble {
+  background: var(--pine-wash); color: var(--ink); border: 1px solid var(--pine-edge);
+}
+
+/* The left edge encodes provenance: pine = grounded in the student's own
+   materials, grey = answered from general knowledge. It is the only
+   place that distinction is shown, and it is the one a student most
+   needs. */
+.answer {
+  border-left: 3px solid var(--pine); padding-left: 19px; max-width: 78ch;
+}
+.answer.general { border-left-color: var(--line-strong); }
+.answer.is-error { border-left-color: var(--rose); }
+
+.answer-flag {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 11px;
+  font: 600 12px/1 var(--font-body); color: var(--pine);
+}
+.answer.general .answer-flag { color: var(--muted); }
+.answer.is-error .answer-flag { color: var(--rose); }
+.answer-flag svg { width: 13px; height: 13px; }
+
+.answer .chat-markdown p {
+  font: 400 15.2px/1.68 var(--font-body); color: var(--ink-2); margin: 0 0 13px;
+}
+.answer .chat-markdown strong { color: var(--ink); font-weight: 600; }
+
+/* thinking dots, in the place the provenance flag will occupy */
+.answer.is-thinking { border-left-color: var(--line-strong); }
+.answer.is-thinking .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--faint);
+  display: inline-block; animation: think 1.1s ease-in-out infinite;
+}
+.answer.is-thinking .dot:nth-child(2) { animation-delay: .15s; }
+.answer.is-thinking .dot:nth-child(3) { animation-delay: .3s; }
+@keyframes think {
+  0%, 60%, 100% { opacity: .3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .answer.is-thinking .dot { animation: none; opacity: .6; }
+}
+
+.chat-system-notice {
+  align-self: center; font: 500 12.5px/1.4 var(--font-body);
+  color: var(--muted); background: var(--sunk);
+  border: 1px solid var(--line); border-radius: var(--r-chip);
+  padding: 6px 14px; list-style: none;
+}
+
+/* Citations. Shown in the aside, so the copy under each answer is
+   hidden - until the window is too narrow for the aside, at which
+   point these are the only provenance a student would have. The
+   breakpoint is the one that hides .aside; the two must stay in step. */
+.sources { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+@media (max-width: 1180px) {
+  .sources { display: flex; }
+}
+.src {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px 6px 9px; border-radius: 8px;
+  background: var(--pine-wash); border: 1px solid var(--pine-edge);
+  font: 500 12.5px/1 var(--font-body); color: var(--pine);
+}
+.src svg { width: 13px; height: 13px; flex: none; }
+
+/* answer tables, from the mockup */
+.answer table.ans { width: 100%; border-collapse: collapse; margin: 4px 0 16px; }
+.answer table.ans th {
+  text-align: left; font: 600 12.5px/1 var(--font-body); color: var(--muted);
+  padding: 0 14px 8px 0; border-bottom: 1px solid var(--line-strong);
+}
+.answer table.ans td {
+  font: 400 14px/1.5 var(--font-body); color: var(--ink-2);
+  padding: 10px 14px 10px 0; border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+/* ============================================================
+   Ask — composer
+   ============================================================ */
+
+.composer {
+  flex: none; margin: 0 34px 26px; background: var(--card);
+  border: 1px solid var(--line-strong); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lift); padding: 13px 13px 11px 18px;
+}
+.composer:focus-within { border-color: var(--pine); }
+
+.composer-input {
+  width: 100%; border: none; background: transparent; resize: none;
+  font: 400 15.5px/1.45 var(--font-body); color: var(--ink);
+  padding: 5px 0 12px; outline: none;
+  /* grows with the question, up to a point */
+  field-sizing: content; max-height: 180px;
+}
+.composer-input::placeholder { color: var(--faint); }
+
+.composer-bar { display: flex; align-items: center; gap: 8px; }
+.composer-bar .grow { flex: 1; }
+.cbtn {
+  width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--card); display: grid; place-items: center;
+  color: var(--muted); cursor: pointer;
+}
+.cbtn:hover:not(:disabled) { border-color: var(--pine); color: var(--pine); }
+.cbtn:disabled { opacity: .45; cursor: default; }
+.cbtn:focus-visible { outline: 2px solid var(--pine); outline-offset: 1px; }
+.cbtn svg { width: 16px; height: 16px; }
+
+.send {
+  display: inline-flex; align-items: center; gap: 8px; height: 38px;
+  padding: 0 16px; border: none; border-radius: var(--r-md);
+  background: var(--pine); color: #fff;
+  font: 600 14px/1 var(--font-body); cursor: pointer;
+}
+:root[data-theme="dark"] .send { background: var(--pine-2); color: #07201C; }
+.send:disabled { opacity: .5; cursor: default; }
+.send:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
+.send svg { width: 15px; height: 15px; }
+
+@media (max-width: 680px) {
+  .composer { margin: 0 14px 16px; }
+}
+
+/* ============================================================
+   Aside
+   ============================================================ */
+
+.aside-h { font: 700 13px/1 var(--font-display); margin: 0 0 13px; }
+.aside-h + .aside-h { margin-top: 26px; }
+.src-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.src-row:first-of-type { padding-top: 0; }
+.src-name {
+  display: flex; align-items: center; gap: 8px;
+  font: 600 13px/1.3 var(--font-body); color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.src-name svg { width: 14px; height: 14px; color: var(--pine); flex: none; }
+.src-quote { font: 400 12.5px/1.55 var(--font-body); color: var(--muted); margin: 7px 0 8px; }
+.rel { display: flex; flex-direction: column; gap: 2px; }
+.rel span {
+  display: flex; align-items: center; gap: 9px; padding: 9px 0;
+  font: 500 13.2px/1.35 var(--font-body); color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.rel span svg { width: 14px; height: 14px; color: var(--faint); flex: none; }
+
+/* ============================================================
+   Documents
+   ============================================================ */
+
+.drop {
+  border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg);
+  background: var(--card); padding: 26px; text-align: center; margin-bottom: 14px;
+}
+.drop.is-over { border-color: var(--pine); background: var(--pine-wash); }
+.drop-ic {
+  width: 44px; height: 44px; border-radius: 13px;
+  background: var(--pine-wash); color: var(--pine);
+  display: grid; place-items: center; margin: 0 auto 13px;
+}
+.drop-ic svg { width: 21px; height: 21px; }
+.drop-t { font: 600 15px/1.3 var(--font-display); letter-spacing: -.012em; }
+.drop-s { font: 400 13px/1.5 var(--font-body); color: var(--muted); margin-top: 5px; }
+
+.url-row {
+  display: flex; gap: 9px; margin: 15px auto 0; max-width: 460px;
+}
+.url-in {
+  flex: 1; height: 38px; display: flex; align-items: center; gap: 8px;
+  padding: 0 13px; border-radius: var(--r-md);
+  border: 1px solid var(--line-strong); background: var(--paper);
+}
+.url-in:focus-within { border-color: var(--pine); }
+.url-in svg { width: 15px; height: 15px; color: var(--faint); flex: none; }
+.url-in input {
+  flex: 1; min-width: 0; border: none; background: transparent;
+  font: 400 13.5px/1 var(--font-body); color: var(--ink); outline: none;
+}
+.url-in input::placeholder { color: var(--faint); }
+
+.doc-status {
+  margin: 0 0 14px; padding: 10px 14px; border-radius: var(--r-md);
+  font: 500 13px/1.45 var(--font-body);
+}
+.doc-status.ok { background: var(--pine-wash); color: var(--pine); border: 1px solid var(--pine-edge); }
+.doc-status.bad { background: var(--rose-wash); color: var(--rose); }
+.doc-empty { font: 400 14px/1.6 var(--font-body); color: var(--muted); margin: 0; }
+
+table.docs { width: 100%; border-collapse: collapse; }
+table.docs th {
+  text-align: left; font: 600 12px/1 var(--font-body); color: var(--faint);
+  padding: 0 12px 10px 0; border-bottom: 1px solid var(--line-strong);
+}
+table.docs td {
+  padding: 13px 12px 13px 0; border-bottom: 1px solid var(--line);
+  font: 400 13.5px/1.35 var(--font-body); color: var(--ink-2);
+  vertical-align: middle;
+}
+table.docs tr:last-child td { border-bottom: 0; }
+.doc-name {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 500; color: var(--ink); overflow-wrap: anywhere;
+}
+.doc-name svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
+.row-acts { display: flex; gap: 6px; justify-content: flex-end; }
+
+@media (max-width: 760px) {
+  /* Type, subject and date are context; the name and the remove button
+     are the job. */
+  table.docs th:nth-child(2), table.docs td:nth-child(2),
+  table.docs th:nth-child(4), table.docs td:nth-child(4),
+  table.docs th:nth-child(5), table.docs td:nth-child(5) { display: none; }
+}
+
+/* ============================================================
+   Sign-in failure banner
+   ============================================================ */
+
+.app-auth-error {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 14px 34px 0; padding: 9px 13px;
+  border: 1px solid var(--marigold-edge); border-radius: var(--r-md);
+  background: var(--marigold-wash); color: var(--ink);
+  font: 500 13px/1.4 var(--font-body);
+}
+.app-auth-error button {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 1.1rem; line-height: 1; cursor: pointer;
+}
+
+/* ---------- sources column, hidden by choice ----------------------- */
+
+.body.with-aside.aside-hidden { grid-template-columns: 1fr; }
+.body.aside-hidden .aside { display: none; }
+
+/* Put the citations back under each answer. Hiding the column and the
+   inline chips at the same time would leave an answer marked "from your
+   course materials" with no way to see which one - the provenance has
+   to live somewhere. */
+.body.aside-hidden .sources { display: flex; }
+
+/* The document filter, on the screen it filters. */
+.doc-filter {
+  display: flex; align-items: center; gap: 9px;
+  height: 38px; max-width: 420px; margin-bottom: 14px; padding: 0 13px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--card);
+}
+.doc-filter:focus-within { border-color: var(--pine); }
+.doc-filter svg { width: 16px; height: 16px; color: var(--faint); flex: none; }
+.doc-filter input {
+  flex: 1; min-width: 0; border: none; background: transparent;
+  font: 400 14px/1 var(--font-body); color: var(--ink); outline: none;
+}
+.doc-filter input::placeholder { color: var(--faint); }
