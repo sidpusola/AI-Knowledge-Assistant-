@@ -156,6 +156,25 @@ class Settings:
     # more than RETRIEVER_K so the gap is measured against a real spread.
     RETRIEVER_CANDIDATES: int = _get_int("RETRIEVER_CANDIDATES", 10)
 
+    # The pool for a second look, taken only when the first pass found
+    # nothing at all (see rag/retriever.py). Raising RETRIEVER_CANDIDATES
+    # itself was measured and rejected: a flat 30 costs 61/68 -> 59/68 on
+    # the retrieval eval and triples reranking on every request, while
+    # deepening on a miss leaves successful queries exactly as they were.
+    RETRIEVER_DEEP_CANDIDATES: int = _get_int("RETRIEVER_DEEP_CANDIDATES", 45)
+
+    # The deep pass reaches into the long tail of the bi-encoder's
+    # ranking, where a loosely related chunk is much likelier than in the
+    # top ten, so it has to clear a higher bar than RERANKER_SCORE_
+    # THRESHOLD. Measured on the three queries that decide it: the
+    # answering chunk for "minimum internet speed" scores -0.73, while
+    # the best false positives for "third normal form" and "database
+    # indexing strategies" - both absent from this corpus - score -3.32
+    # and -1.57. At -3.5 all three pass and the eval loses two cases.
+    RETRIEVER_DEEP_SCORE_THRESHOLD: float = _get_float(
+        "RETRIEVER_DEEP_SCORE_THRESHOLD", -1.0
+    )
+
     # "similarity" (plain top-k) or "mmr" (Maximum Marginal Relevance - trades
     # some relevance for diversity among the results). Worth it specifically
     # when the corpus has near-duplicate content: two versions of the same

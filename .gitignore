@@ -19,3 +19,10 @@ database/*.db-shm
 # committed with live credentials in it.
 .env.*
 !.env.example
+
+# One-off agent eval dumps - debugging output, not fixtures or source.
+arith.json
+attrib.json
+latency.json
+length.json
+tool_latency.json

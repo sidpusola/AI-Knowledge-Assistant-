@@ -8,6 +8,8 @@ the right decision is made about passing context to the model at all.
 Queries are grouped by how hard that decision is:
 
   easy        wording overlaps the source text directly
+  terse       two or three words with no topical anchor, which rank the
+              answering chunk outside a shallow candidate pool
   paraphrase  answerable, but sharing few or no words with the source
   adjacent    NOT in the corpus, but close enough to it to be tempting -
               "data lake" against a data-warehousing corpus. The honest
@@ -116,6 +118,22 @@ QUERIES: list[tuple[str, bool, str]] = [
     ("recommend a good film", False, "unrelated"),
     ("how do I change a car tyre", False, "unrelated"),
     ("what is the population of Brazil", False, "unrelated"),
+
+    # --- terse: two or three words, no topical anchor ---------------------
+    # The group that exposed the candidate-pool bug. "minimum internet
+    # speed" is answered on page 2 of the assessment handout, but with a
+    # pool of 10 the chunk ranked 18th and never reached the reranker, so
+    # retrieval reported the materials silent on it. These are here so
+    # the deep second pass stays honest: the first four must be found,
+    # and the last three must still be refused, since a deeper pool is
+    # also a better chance to dredge up something merely adjacent.
+    ("minimum internet speed", True, "terse"),
+    ("webcam requirement", True, "terse"),
+    ("OLAP", True, "terse"),
+    ("heading tags", True, "terse"),
+    ("third normal form", False, "terse"),
+    ("database indexing", False, "terse"),
+    ("kubernetes operator", False, "terse"),
 
     # --- chatty -----------------------------------------------------------
     ("hello", False, "chatty"),

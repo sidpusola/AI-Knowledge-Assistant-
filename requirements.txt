@@ -1,0 +1,4 @@
+
+# Web search for the agent's search_the_web tool. DuckDuckGo: free,
+# no API key, which keeps the all-local/no-cost constraint intact.
+ddgs==9.16.0

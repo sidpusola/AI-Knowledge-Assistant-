@@ -193,6 +193,62 @@ def reset_session(session_id:str):
     return {"message":"Conversation reset"}
 
 
+@app.post("/agent")
+def ask_agent(request:QuestionRequest, http_request:Request):
+    """The tool-calling agent, on its own endpoint.
+
+    Separate from /ask on purpose. /ask is the RAG chain and answers a
+    question about the materials in well under a second; the agent adds
+    a tool-selection round trip plus a loop to every question, which is
+    worth paying only when the question needs more than retrieval - a
+    calculation, several documents at once, or a look back over past
+    sessions. Putting the agent in front of /ask would spend that on
+    every question for no gain.
+
+    Signed in, the agent also gets a tool for the student's own study
+    history. Signed out it does not, so there is nothing to leak.
+    """
+    question=request.question.strip()
+
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    user=auth.current_user(http_request)
+    session_id=request.session_id or str(uuid4())
+    history=SESSIONS.setdefault(session_id, [])
+
+    # Imported here, not at module scope: building the agent pulls in
+    # langgraph and compiles a graph, and a server that never sees an
+    # agent request should not pay for that at startup.
+    from agent.executor import run_agent
+
+    result=run_agent(question, history, user.id if user else None)
+
+    if result.get("error"):
+        # run_agent never raises - it reports. A model that is not
+        # running is a 503 the same way /ask treats it.
+        raise HTTPException(status_code=503, detail=result["answer"])
+
+    _record_turn(session_id, history, question, result["answer"])
+
+    return {
+        "question":question,
+        "answer":result["answer"],
+        # Which tools ran, returned deliberately: it is the only way to
+        # tell a right answer from the right tool apart from a right
+        # answer by luck, and the eval reads exactly this field.
+        "tools_used":result["tools_used"],
+        # True when the model answered without opening the materials and
+        # code had to go and search for it. Exposed rather than hidden:
+        # it is how we tell tool choice improving apart from the
+        # backstop papering over it.
+        "rescued":result.get("rescued", False),
+        "steps":result["steps"],
+        "stopped_early":result.get("stopped_early", False),
+        "session_id":session_id
+    }
+
+
 class ProfileRequest(BaseModel):
     display_name:str
     # ISO "YYYY-MM-DD", or omitted. Validated in auth.parse_dob.

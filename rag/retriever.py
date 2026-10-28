@@ -125,6 +125,9 @@ def retrieve(
     file_type: str | None = None,
     k: int | None = None,
     strategy: str | None = None,
+    candidates: int | None = None,
+    deepen: bool = True,
+    rerank_floor: float | None = None,
 ) -> list[Document]:
     """Retrieve chunks, or nothing if none are convincingly relevant.
 
@@ -133,6 +136,8 @@ def retrieve(
     """
     if is_small_talk(query):
         return []
+
+    pool = candidates or settings.RETRIEVER_CANDIDATES
 
     k = k or settings.RETRIEVER_K
     strategy = strategy or settings.RETRIEVAL_STRATEGY
@@ -182,7 +187,7 @@ def retrieve(
 
     scored = vectorstore.similarity_search_with_relevance_scores(
         query,
-        k=settings.RETRIEVER_CANDIDATES,
+        k=pool,
         filter=where,
     )
 
@@ -195,9 +200,38 @@ def retrieve(
     if settings.USE_RERANKER:
         from rag.reranker import rerank
 
+        floor = (settings.RERANKER_SCORE_THRESHOLD if rerank_floor is None
+                 else rerank_floor)
         ranked = rerank(query, [doc for doc, _ in scored])
-        kept = [doc for doc, score in ranked if score >= settings.RERANKER_SCORE_THRESHOLD]
-        return kept[:k]
+        kept = [doc for doc, score in ranked if score >= floor]
+        if kept:
+            return kept[:k]
+
+        # Nothing cleared the bar. Before reporting a miss, look deeper -
+        # but only now, because the bi-encoder's ranking is the weak link
+        # and a short query can leave the right chunk outside the pool.
+        #
+        # Measured on "minimum internet speed": the answering chunk ranks
+        # 18th, outside a pool of 10, and the cross-encoder scores it
+        # -0.73 against a -3.5 bar. It would have been accepted on sight.
+        # The agent therefore reported the materials silent on something
+        # its own handout states, and answered from general knowledge.
+        #
+        # Deepening only on a miss rather than raising the pool for every
+        # query: at a flat 30 the tracked retrieval eval drops 61/68 ->
+        # 59/68 and every request pays triple the reranking. Here the
+        # queries that already succeed are untouched, and the cost falls
+        # only where the alternative was returning nothing.
+        if deepen and pool < settings.RETRIEVER_DEEP_CANDIDATES:
+            return retrieve(
+                vectorstore, query,
+                category=category, file_type=file_type, k=k,
+                strategy=strategy,
+                candidates=settings.RETRIEVER_DEEP_CANDIDATES,
+                deepen=False,
+                rerank_floor=settings.RETRIEVER_DEEP_SCORE_THRESHOLD,
+            )
+        return []
 
     scores = [score for _, score in scored]
 
