@@ -17,9 +17,10 @@ SQLite specifics worth knowing, both handled in _on_connect below:
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterator
 from uuid import uuid4
@@ -31,7 +32,10 @@ from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import sessionmaker
 
 from config import settings
-from database.models import Base, ChatSession, Message, User, utcnow
+from database.models import (
+    Base, ChatSession, Message, PracticeResult, PracticeSet, StudyGuide, User,
+    utcnow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +312,169 @@ def user_stats(user_id: int) -> dict:
             "questions": questions,
             "first_seen": (first or user.created_at).isoformat(),
             "last_seen": (last or user.last_seen_at).isoformat(),
+        }
+
+
+# --- practice --------------------------------------------------------
+
+def create_practice_set(kind: str, doc_id: str, filename: str, items: list[dict],
+                        user_id: int | None) -> str:
+    with session_scope() as session:
+        practice = PracticeSet(
+            id=str(uuid4()), kind=kind, user_id=user_id, doc_id=doc_id,
+            filename=filename, items=json.dumps(items),
+        )
+        session.add(practice)
+        return practice.id
+
+
+def get_practice_set(set_id: str) -> dict | None:
+    with session_scope() as session:
+        practice = session.get(PracticeSet, set_id)
+        if practice is None:
+            return None
+        return {
+            "id": practice.id,
+            "kind": practice.kind,
+            "user_id": practice.user_id,
+            "doc_id": practice.doc_id,
+            "filename": practice.filename,
+            "items": json.loads(practice.items),
+            "responses": json.loads(practice.responses or "{}"),
+        }
+
+
+def save_practice_response(set_id: str, index: int, response) -> tuple[dict, bool]:
+    """Record the response to one item, unless it was already answered.
+
+    First answer wins. Re-submitting an answered question returns what
+    was recorded rather than overwriting it, so a score can't be raised
+    by answering until right. The flag says whether this call saved it.
+    """
+    with session_scope() as session:
+        practice = session.get(PracticeSet, set_id)
+        responses = json.loads(practice.responses or "{}")
+        key = str(index)
+        if key in responses:
+            return responses, False
+        responses[key] = response
+        practice.responses = json.dumps(responses)
+        return responses, True
+
+
+def record_result(user_id: int, kind: str, doc_id: str, filename: str,
+                  score: float, out_of: float) -> None:
+    with session_scope() as session:
+        session.add(PracticeResult(
+            user_id=user_id, kind=kind, doc_id=doc_id, filename=filename,
+            score=score, out_of=out_of,
+        ))
+
+
+def get_guide(doc_id: str, chunks: int) -> dict | None:
+    """The cached guide, if it was made from the document as it is now."""
+    with session_scope() as session:
+        guide = session.get(StudyGuide, doc_id)
+        if guide is None or guide.chunks != chunks:
+            return None
+        return json.loads(guide.content)
+
+
+def save_guide(doc_id: str, chunks: int, content: dict) -> None:
+    with session_scope() as session:
+        guide = session.get(StudyGuide, doc_id)
+        if guide is None:
+            session.add(StudyGuide(doc_id=doc_id, chunks=chunks, content=json.dumps(content)))
+        else:
+            guide.chunks = chunks
+            guide.content = json.dumps(content)
+            guide.created_at = utcnow()
+
+
+def _ratio(score: float, out_of: float) -> float | None:
+    return round(score / out_of, 3) if out_of else None
+
+
+def progress(user_id: int, tz_offset_minutes: int = 0, days: int = 14) -> dict:
+    """Everything the Progress screen shows, from real records only.
+
+    tz_offset_minutes is the browser's getTimezoneOffset(): minutes
+    *behind* UTC, so India is -330. Without it a question asked at 1am
+    in Delhi lands on yesterday's bar.
+    """
+    shift = timedelta(minutes=-tz_offset_minutes)
+
+    with session_scope() as session:
+        results = session.scalars(
+            select(PracticeResult)
+            .where(PracticeResult.user_id == user_id)
+            .order_by(PracticeResult.created_at)
+        ).all()
+        asked = session.scalars(
+            select(Message.created_at)
+            .join(ChatSession, Message.session_id == ChatSession.id)
+            .where(ChatSession.user_id == user_id, Message.role == "user")
+        ).all()
+        conversations = session.scalar(
+            select(func.count()).select_from(ChatSession)
+            .where(ChatSession.user_id == user_id)
+        ) or 0
+
+        def totals(kind: str) -> dict:
+            rows = [r for r in results if r.kind == kind]
+            score = sum(r.score for r in rows)
+            out_of = sum(r.out_of for r in rows)
+            return {"count": len(rows), "score": score, "out_of": out_of,
+                    "ratio": _ratio(score, out_of)}
+
+        per_doc: dict[str, dict] = {}
+        for row in results:
+            doc = per_doc.setdefault(row.doc_id, {
+                "doc_id": row.doc_id, "filename": row.filename,
+                "quiz_best": None, "quiz_last": None, "quizzes": 0,
+                "cards_known": None, "interview_avg": None, "interviews": 0,
+                "last_active": None,
+            })
+            ratio = _ratio(row.score, row.out_of)
+            if row.kind == "quiz":
+                doc["quizzes"] += 1
+                doc["quiz_last"] = ratio
+                doc["quiz_best"] = max(doc["quiz_best"] or 0, ratio or 0)
+            elif row.kind == "flashcards":
+                doc["cards_known"] = ratio
+            elif row.kind == "interview":
+                total = (doc["interview_avg"] or 0) * doc["interviews"] + row.score
+                doc["interviews"] += 1
+                doc["interview_avg"] = round(total / doc["interviews"], 2)
+            doc["last_active"] = row.created_at.isoformat()
+
+        today = (utcnow() + shift).date()
+        window = [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+        activity = {day: {"questions": 0, "practice": 0} for day in window}
+        for when in asked:
+            day = (when + shift).date()
+            if day in activity:
+                activity[day]["questions"] += 1
+        for row in results:
+            day = (row.created_at + shift).date()
+            if day in activity:
+                activity[day]["practice"] += 1
+
+        return {
+            "questions_asked": len(asked),
+            "conversations": conversations,
+            "quiz": totals("quiz"),
+            "flashcards": totals("flashcards"),
+            "interview": totals("interview"),
+            "documents": sorted(per_doc.values(),
+                                key=lambda d: d["last_active"] or "", reverse=True),
+            "activity": [{"date": day.isoformat(), **counts}
+                         for day, counts in activity.items()],
+            "recent": [
+                {"kind": r.kind, "filename": r.filename, "score": r.score,
+                 "out_of": r.out_of, "created_at": r.created_at.isoformat()}
+                for r in reversed(results[-10:])
+            ],
         }
 
 

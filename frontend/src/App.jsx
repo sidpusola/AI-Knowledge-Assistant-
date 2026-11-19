@@ -5,10 +5,17 @@ import "./styles/tokens.css";
 import "./styles/shell.css";
 import "./App.css";
 import "./styles/screens.css";
+import "./styles/study.css";
 
 import AppShell from "./components/AppShell.jsx";
 import ChatView from "./components/ChatView.jsx";
+import CourseView from "./components/CourseView.jsx";
 import DocumentsView from "./components/DocumentsView.jsx";
+import FlashcardsView from "./components/FlashcardsView.jsx";
+import GuideView from "./components/GuideView.jsx";
+import PlacementView from "./components/PlacementView.jsx";
+import ProgressView from "./components/ProgressView.jsx";
+import QuizView from "./components/QuizView.jsx";
 import {
   COOKIE_HOST, fetchAuthStatus, fetchMe, listDocuments, resetSession,
 } from "./api.js";
@@ -81,6 +88,14 @@ function App() {
   const [railCollapsed, setRailCollapsed] = useState(() => stored("aika_rail"));
   const [asideHidden, setAsideHidden] = useState(() => stored("aika_aside"));
   const [documents, setDocuments] = useState([]);
+  // The document handed from one screen to the next - "Quiz" on a course
+  // card opens the quiz already pointed at that document.
+  const [focusDoc, setFocusDoc] = useState(null);
+
+  const navigate = (tab, docId = null) => {
+    if (docId) setFocusDoc(docId);
+    setActiveTab(tab);
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -168,7 +183,7 @@ function App() {
         </div>
       )}
 
-      {activeTab === "chat" ? (
+      {activeTab === "chat" && (
         <ChatView
           key={sessionId}
           sessionId={sessionId}
@@ -178,11 +193,25 @@ function App() {
           asideHidden={asideHidden}
           onToggleAside={() => setAsideHidden((v) => !v)}
         />
-      ) : (
-        <DocumentsView
-          documents={documents}
-          onDocumentsChanged={refreshDocuments}
-        />
+      )}
+      {activeTab === "documents" && (
+        <DocumentsView documents={documents} onDocumentsChanged={refreshDocuments} />
+      )}
+      {activeTab === "course" && (
+        <CourseView documents={documents} user={user} onNavigate={navigate} />
+      )}
+      {activeTab === "guide" && (
+        <GuideView documents={documents} focusDoc={focusDoc} onNavigate={navigate} />
+      )}
+      {activeTab === "quiz" && (
+        <QuizView documents={documents} focusDoc={focusDoc} user={user} onNavigate={navigate} />
+      )}
+      {activeTab === "cards" && (
+        <FlashcardsView documents={documents} focusDoc={focusDoc} user={user} onNavigate={navigate} />
+      )}
+      {activeTab === "progress" && <ProgressView user={user} />}
+      {activeTab === "placement" && (
+        <PlacementView documents={documents} focusDoc={focusDoc} user={user} onNavigate={navigate} />
       )}
     </AppShell>
   );

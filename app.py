@@ -70,6 +70,9 @@ async def lifespan(app:FastAPI):
 
 app=FastAPI(lifespan=lifespan)
 
+from study.routes import router as study_router
+app.include_router(study_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

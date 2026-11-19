@@ -165,6 +165,56 @@ export async function sendFeedback({ sessionId, rating, question, answer, source
   }
 }
 
+/* --- study and practice ----------------------------------------------
+ *
+ * Generation runs several local model calls, so these take seconds, not
+ * milliseconds - every screen that calls them shows that it is working.
+ */
+
+async function postJson(path, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonOrThrow(response);
+}
+
+export async function fetchGuide(docId, { refresh = false } = {}) {
+  const query = refresh ? "?refresh=true" : "";
+  const response = await fetch(`${API_BASE}/study/guide/${docId}${query}`, {
+    credentials: "include",
+  });
+  return parseJsonOrThrow(response);
+}
+
+export const startQuiz = (docId, count = 5) =>
+  postJson("/study/quiz", { doc_id: docId, count });
+
+export const answerQuiz = (quizId, index, choice) =>
+  postJson(`/study/quiz/${quizId}/answer`, { index, choice });
+
+export const makeFlashcards = (docId, count = 8) =>
+  postJson("/study/flashcards", { doc_id: docId, count });
+
+export const recordFlashcards = (docId, known, total) =>
+  postJson("/study/flashcards/review", { doc_id: docId, known, total });
+
+export const startInterview = (docId) =>
+  postJson("/study/interview", { doc_id: docId });
+
+export const answerInterview = (interviewId, answer) =>
+  postJson(`/study/interview/${interviewId}/answer`, { answer });
+
+export async function fetchProgress() {
+  const offset = new Date().getTimezoneOffset();
+  const response = await fetch(`${API_BASE}/me/progress?tz_offset=${offset}`, {
+    credentials: "include",
+  });
+  return parseJsonOrThrow(response);
+}
+
 /* --- accounts -------------------------------------------------------
  *
  * These all pass credentials: "include". The session is an HttpOnly

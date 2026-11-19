@@ -5,19 +5,11 @@ import {
 
 import UserMenu from "./UserMenu.jsx";
 
-/* The two screens that have a backend behind them. Everything else in
- * the design is a feature that does not exist yet - see BLOCKED below. */
-const LIVE_NAV = [
+const NAV = [
   { id: "chat", label: "Ask", Icon: MessageCircle, group: "Study" },
-  { id: "documents", label: "Documents", Icon: FileText, group: "Study" },
-];
-
-/* Shown, dimmed and inert. Hiding them would lose the shape of the
- * product the design describes; wiring them to empty screens would
- * imply they work. Dimmed with a "soon" marker is the honest middle. */
-const PLANNED_NAV = [
   { id: "course", label: "My course", Icon: BookOpen, group: "Study" },
   { id: "guide", label: "Guide", Icon: Compass, group: "Study" },
+  { id: "documents", label: "Documents", Icon: FileText, group: "Study" },
   { id: "quiz", label: "Quiz", Icon: ListChecks, group: "Practice" },
   { id: "cards", label: "Flashcards", Icon: Layers, group: "Practice" },
   { id: "progress", label: "Progress", Icon: BarChart3, group: "Your track" },
@@ -28,21 +20,15 @@ const GROUPS = ["Study", "Practice", "Your track"];
 
 function NavItem({ item, active, onSelect }) {
   const { id, label, Icon } = item;
-  if (!onSelect) {
-    return (
-      <div className="nav-item soon" aria-disabled="true">
-        <Icon aria-hidden="true" />
-        <span>{label}</span>
-        <span className="soon-tag">soon</span>
-      </div>
-    );
-  }
   return (
     <button
       type="button"
       className={`nav-item ${active ? "on" : ""}`}
       onClick={() => onSelect(id)}
       aria-current={active ? "page" : undefined}
+      // The visible label is hidden when the rail is a strip of icons.
+      aria-label={label}
+      title={label}
     >
       <Icon aria-hidden="true" />
       <span>{label}</span>
@@ -99,27 +85,19 @@ export default function AppShell({
         </div>
 
         <nav>
-          {GROUPS.map((group) => {
-            const live = LIVE_NAV.filter((item) => item.group === group);
-            const planned = PLANNED_NAV.filter((item) => item.group === group);
-            if (!live.length && !planned.length) return null;
-            return (
-              <div className="nav-group" key={group}>
-                <div className="nav-head">{group}</div>
-                {live.map((item) => (
-                  <NavItem
-                    key={item.id}
-                    item={item}
-                    active={activeTab === item.id}
-                    onSelect={onTabChange}
-                  />
-                ))}
-                {planned.map((item) => (
-                  <NavItem key={item.id} item={item} />
-                ))}
-              </div>
-            );
-          })}
+          {GROUPS.map((group) => (
+            <div className="nav-group" key={group}>
+              <div className="nav-head">{group}</div>
+              {NAV.filter((item) => item.group === group).map((item) => (
+                <NavItem
+                  key={item.id}
+                  item={item}
+                  active={activeTab === item.id}
+                  onSelect={onTabChange}
+                />
+              ))}
+            </div>
+          ))}
         </nav>
 
         <div className="rail-footer">

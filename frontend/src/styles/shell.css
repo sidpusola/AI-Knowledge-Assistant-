@@ -98,16 +98,6 @@ body {
   padding: 3px 6px; border-radius: var(--r-chip);
 }
 
-/* Items for features that do not exist yet. Shown because the course
-   structure is the point of the design, dimmed and inert because
-   pretending they work would be worse than admitting they don't. */
-.nav-item.soon { opacity: .45; cursor: default; }
-.nav-item.soon:hover { background: transparent; }
-.nav-item .soon-tag {
-  margin-left: auto; font: 600 10px/1 var(--font-body);
-  color: var(--faint); letter-spacing: .04em; text-transform: uppercase;
-}
-
 /* ---------- icon button (used by the sources toggle) -------------- */
 
 .icon-btn {
@@ -185,9 +175,10 @@ h2.sec { font: 700 16px/1.2 var(--font-display); letter-spacing: -.015em; margin
   .nav-head,
   .nav-item span,
   .nav-item .badge,
-  .nav-item .soon-tag,
+  .brand-name { display: none; }
   .brand { padding: 0 0 20px; justify-content: center; }
   .nav-item { justify-content: center; padding: 10px; }
+  .rail-footer { justify-content: center; padding: 10px 0 0; }
 }
 
 @media (max-width: 680px) {
@@ -215,8 +206,7 @@ h2.sec { font: 700 16px/1.2 var(--font-display); letter-spacing: -.015em; margin
 .app.rail-collapsed { grid-template-columns: 64px 1fr; }
 .app.rail-collapsed .nav-head,
 .app.rail-collapsed .nav-item span,
-.app.rail-collapsed .nav-item .badge,
-.app.rail-collapsed .nav-item .soon-tag { display: none; }
+.app.rail-collapsed .nav-item .badge { display: none; }
 .app.rail-collapsed .brand { padding: 0 0 20px; justify-content: center; }
 .app.rail-collapsed .nav-item { justify-content: center; padding: 10px; }
 .app.rail-collapsed .rail-footer { justify-content: center; padding: 10px 0 0; }

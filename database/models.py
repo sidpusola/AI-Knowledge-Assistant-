@@ -142,7 +142,73 @@ class Message(Base):
         return f"<Message {self.id} {self.role}>"
 
 
+class PracticeSet(Base):
+    """A generated quiz or interview question, kept until it is answered.
+
+    Stored here rather than handed to the browser whole, because answers
+    are graded on the server: a score the page computes is a score the
+    page can invent, and these numbers feed the NGO's reporting. user_id
+    is None for a signed-out student - they can practise, but nothing is
+    recorded against anyone.
+    """
+
+    __tablename__ = "practice_sets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))           # "quiz" | "interview"
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, default=None
+    )
+    doc_id: Mapped[str] = mapped_column(String(64))
+    filename: Mapped[str] = mapped_column(String(255))
+
+    # JSON. items holds the answers, so it never leaves the server as-is.
+    items: Mapped[str] = mapped_column(Text)
+    responses: Mapped[str] = mapped_column(Text, default="{}")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PracticeResult(Base):
+    """One finished piece of practice, for the Progress screen."""
+
+    __tablename__ = "practice_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))           # "quiz" | "flashcards" | "interview"
+    doc_id: Mapped[str] = mapped_column(String(64))
+    filename: Mapped[str] = mapped_column(String(255))
+
+    # Earned out of possible: 4 of 5 questions, 7 of 10 cards known, a 3
+    # out of 5 interview rating. One shape, so Progress needs no special
+    # case per kind.
+    score: Mapped[float] = mapped_column()
+    out_of: Mapped[float] = mapped_column()
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class StudyGuide(Base):
+    """A generated guide for one document, cached.
+
+    Generating one takes several model calls, and the document does not
+    change between visits. chunks is the passage count at generation
+    time: a re-ingest that changes it makes the cached guide stale.
+    """
+
+    __tablename__ = "study_guides"
+
+    doc_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chunks: Mapped[int] = mapped_column()
+    content: Mapped[str] = mapped_column(Text)              # JSON
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 # The query behind the session list - "this user's conversations, newest
 # first" - runs on every page load, so it gets an index rather than a
 # scan per visit.
 Index("ix_sessions_user_updated", ChatSession.user_id, ChatSession.updated_at.desc())
+Index("ix_results_user_created", PracticeResult.user_id, PracticeResult.created_at)
