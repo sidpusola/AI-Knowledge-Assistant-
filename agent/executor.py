@@ -129,6 +129,58 @@ def _disowns_materials(text: str) -> bool:
     return bool(_DISOWNS.search(text or ""))
 
 
+# A cue has to sit near a number, not just anywhere in the same question.
+# "a digit somewhere and a cue word somewhere" first version flagged
+# "Chapter 5 covers what students need out of this course" - a 5 and an
+# "out of" that have nothing to do with each other - and the forced retry
+# on that false positive didn't just waste a turn, it made the model
+# fabricate an unrelated tax calculation out of nowhere. .{0,40}? bounds
+# "near" to about a clause, which is enough for "how many Mbps... reach 1
+# Gbps" but not enough to bridge two unrelated sentences.
+#
+# multiply/divide are kept digit-free: "divide the total by the count"
+# needs the calculator with no literal number in the question at all, the
+# figures having come from a tool instead.
+_ARITHMETIC_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*%"
+    r"|\bpercent(?:age)?\b.{0,40}?\d|\d.{0,40}?\bpercent(?:age)?\b"
+    r"|\d+(?:\.\d+)?\s*(?:out of|/)\s*\d+(?:\.\d+)?"
+    r"|\d+(?:\.\d+)?\s*times\s*\d+(?:\.\d+)?"
+    r"|\btimes\s+(?:faster|slower|more|less)\b.{0,40}?\d"
+    r"|\d.{0,40}?\btimes\s+(?:faster|slower|more|less)\b"
+    r"|\b(?:how many|how much)\b.{0,40}?\d|\d.{0,40}?\b(?:how many|how much)\b"
+    r"|\bmultipl(?:y|ied)\b|\bdivid(?:e|ed)\b"
+    r"|\bconvert\b.{0,40}?\d|\d.{0,40}?\bconvert\b"
+    r"|\bratio\b.{0,40}?\d|\d.{0,40}?\bratio\b"
+    r"|\b(?:sum|total|difference)\b.{0,40}?\d|\d.{0,40}?\b(?:sum|total|difference)\b",
+    re.I,
+)
+
+
+def _needs_arithmetic(question: str) -> bool:
+    """Does this question's answer require a computation, not a quote?
+
+    A false positive here costs a full extra agent turn - much more than
+    needs_rewrite's one cheap call - and, worse than wasting it, can push
+    a forced retry into inventing numbers to satisfy it (see above). So
+    a cue has to be adjacent to a number, not merely co-present with one.
+    A follow-up that refers back to a number from an earlier turn without
+    repeating it ("and how many times faster is that?") is a known miss;
+    catching it would need the conversation history too.
+    """
+    return bool(_ARITHMETIC_PATTERN.search(question or ""))
+
+
+def _answer_has_number(text: str) -> bool:
+    """Did the answer actually state a value, computed or not?
+
+    If it didn't - a refusal, a clarifying question, a report that
+    nothing was found to compute from - there is nothing to doubt the
+    arithmetic of, and retrying would just burn a turn for no reason.
+    """
+    return bool(re.search(r"\d", text or ""))
+
+
 def _final_answer(produced: list):
     """The last assistant message that is prose rather than a tool call."""
     return next(
@@ -310,10 +362,46 @@ def run_agent(question: str, history: list | None = None, user_id: int | None = 
     # `produced` is the retry's messages and the earlier answer is the
     # one we rejected.
     final = _final_answer(produced)
+    answer_text = final.content if final else ""
+
+    # The arithmetic guard. Deliberately separate from the disowns check
+    # above rather than folded into it: that one exists for the case
+    # where a wrong citation and a skipped calculator happen together,
+    # but they are independent failures. Measured: asked to look up a
+    # figure and compute from it, the agent searched, cited the right
+    # page, and still worked out "1000 / 10 = 100" itself - a correctly
+    # grounded answer that skipped the calculator on its own, which the
+    # disowns check has no reason to catch since nothing was disowned.
+    if ("calculate" not in tools_used
+            and _needs_arithmetic(question)
+            and _answer_has_number(answer_text)):
+        rescued = True
+        logger.info("[agent] needed arithmetic but never called the "
+                    "calculator - retrying with it required: %r", question[:60])
+        retry = _agent_for(user_id).invoke(
+            {"messages": [
+                *messages,
+                HumanMessage(content=(
+                    "Your last answer was:\n\n" + answer_text + "\n\n"
+                    "That worked out the arithmetic without calling the "
+                    "calculate tool. Call calculate with the expression, "
+                    "using the figures above, then give the final answer "
+                    "again with its result."
+                )),
+            ]},
+            config={"recursion_limit": MAX_STEPS * 2},
+        )
+        produced = retry.get("messages", [])
+        tools_used = [
+            *tools_used,
+            *(m.name for m in produced
+              if isinstance(m, ToolMessage) and m.name),
+        ]
+        final = _final_answer(produced)
+        answer_text = final.content if final else ""
 
     return {
-        "answer": (final.content if final else
-                   "I could not put an answer together for that."),
+        "answer": answer_text or "I could not put an answer together for that.",
         "tools_used": tools_used,
         "rescued": rescued,
         # What the model reached for first, before any backstop. The
