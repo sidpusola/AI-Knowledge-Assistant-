@@ -34,7 +34,7 @@ from sqlalchemy.orm import sessionmaker
 from config import settings
 from database.models import (
     Base, ChatSession, Message, PracticeResult, PracticeSet, StudyGuide, User,
-    utcnow,
+    WorkflowReview, utcnow,
 )
 
 logger = logging.getLogger(__name__)
@@ -389,6 +389,53 @@ def save_guide(doc_id: str, chunks: int, content: dict) -> None:
             guide.chunks = chunks
             guide.content = json.dumps(content)
             guide.created_at = utcnow()
+
+
+# --- workflow review queue ---------------------------------------------
+
+def _review_dict(row: WorkflowReview) -> dict:
+    return {
+        "thread_id": row.thread_id,
+        "question": row.question,
+        "draft": row.draft,
+        "issues": json.loads(row.issues or "[]"),
+        "sources": json.loads(row.sources or "[]"),
+        "status": row.status,
+        "final_answer": row.final_answer,
+        "created_at": row.created_at.isoformat(),
+        "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+    }
+
+
+def add_review(thread_id: str, question: str, draft: str, issues: list, sources: list) -> None:
+    with session_scope() as session:
+        session.add(WorkflowReview(
+            thread_id=thread_id, question=question, draft=draft,
+            issues=json.dumps(issues), sources=json.dumps(sources),
+        ))
+
+
+def get_review(thread_id: str) -> dict | None:
+    with session_scope() as session:
+        row = session.get(WorkflowReview, thread_id)
+        return _review_dict(row) if row else None
+
+
+def list_reviews(status: str | None = "pending", limit: int = 50) -> list[dict]:
+    with session_scope() as session:
+        query = select(WorkflowReview).order_by(WorkflowReview.created_at.desc()).limit(limit)
+        if status:
+            query = query.where(WorkflowReview.status == status)
+        return [_review_dict(row) for row in session.scalars(query).all()]
+
+
+def decide_review(thread_id: str, status: str, final_answer: str, reviewer_id: int) -> None:
+    with session_scope() as session:
+        row = session.get(WorkflowReview, thread_id)
+        row.status = status
+        row.final_answer = final_answer
+        row.reviewer_id = reviewer_id
+        row.decided_at = utcnow()
 
 
 def _ratio(score: float, out_of: float) -> float | None:

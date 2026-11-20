@@ -159,6 +159,24 @@
 .cbtn:focus-visible { outline: 2px solid var(--pine); outline-offset: 1px; }
 .cbtn svg { width: 16px; height: 16px; }
 
+/* Checked-answers toggle: routes questions through the LangGraph workflow. */
+.check-toggle svg { width: 14px; height: 14px; }
+.check-toggle.on { border-color: var(--pine); background: var(--pine-wash); color: var(--pine); }
+
+/* An answer held for staff review. */
+.answer.held { border-left-color: var(--marigold); }
+.answer.held .answer-flag { color: var(--ink-2); }
+.answer.held .answer-flag svg { color: var(--marigold); }
+
+/* Department filter: narrows retrieval to one subject. */
+.subject-pick select {
+  height: 34px; max-width: 190px; padding: 0 10px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink-2);
+  font: 500 13px/1 var(--font-body); cursor: pointer; text-transform: capitalize;
+}
+.subject-pick select:hover { border-color: var(--pine); }
+.subject-pick select:focus-visible { outline: 2px solid var(--pine); outline-offset: 1px; }
+
 .send {
   display: inline-flex; align-items: center; gap: 8px; height: 38px;
   padding: 0 16px; border: none; border-radius: var(--r-md);

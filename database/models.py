@@ -207,6 +207,30 @@ class StudyGuide(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class WorkflowReview(Base):
+    """An answer the controlled workflow could not verify, held for staff.
+
+    The workflow's own state lives in its checkpoint database; this row is
+    the queue a person works from - what was asked, the held draft, why it
+    failed - and the record of what they decided.
+    """
+
+    __tablename__ = "workflow_reviews"
+
+    thread_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    question: Mapped[str] = mapped_column(Text)
+    draft: Mapped[str] = mapped_column(Text)
+    issues: Mapped[str] = mapped_column(Text, default="[]")        # JSON
+    sources: Mapped[str] = mapped_column(Text, default="[]")       # JSON
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    final_answer: Mapped[str | None] = mapped_column(Text, default=None)
+    reviewer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+
+
 # The query behind the session list - "this user's conversations, newest
 # first" - runs on every page load, so it gets an index rather than a
 # scan per visit.

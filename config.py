@@ -183,6 +183,10 @@ class Settings:
     # passages instead of 3/6. See rag/retriever.py.
     RETRIEVAL_STRATEGY: str = _get_str("RETRIEVAL_STRATEGY", "similarity")
 
+    # "parent" strategy: how many neighbouring chunks on each side of a
+    # match are joined back into the passage the model sees.
+    PARENT_WINDOW: int = _get_int("PARENT_WINDOW", 1)
+
     # How many candidates MMR considers before picking k diverse ones.
     MMR_FETCH_K: int = _get_int("MMR_FETCH_K", 20)
 
@@ -246,6 +250,10 @@ class Settings:
     # see feedback.py for why that beats a table here.
     FEEDBACK_PATH: str = _get_path("FEEDBACK_PATH", "feedback.jsonl")
 
+    # LangGraph checkpoints for the controlled workflow - where a run
+    # paused for human review is kept until someone decides.
+    WORKFLOW_DB_PATH: str = _get_path("WORKFLOW_DB_PATH", "database/workflow_checkpoints.db")
+
     # --- Users, sessions and history (used by database/) ---
     # SQLite because this runs as one process on one box next to the GPU,
     # so the single-writer limit costs nothing and there is no server to
@@ -288,6 +296,12 @@ class Settings:
     # Send the cookie only over HTTPS. False for local development,
     # which is plain http; MUST be true wherever this is deployed.
     COOKIE_SECURE: bool = _get_bool("COOKIE_SECURE", False)
+
+    # Accounts allowed to manage the knowledge base, by verified Google
+    # email. Staff can also be set per user in the database (role =
+    # "staff"); this list is how the first administrator exists at all.
+    # Empty means only database roles count.
+    ADMIN_EMAILS: list[str] = [e.lower() for e in _get_list("ADMIN_EMAILS", "")]
 
     # --- API (used by app.py) ---
     CORS_ORIGINS: list[str] = _get_list(

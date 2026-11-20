@@ -3,11 +3,14 @@ from fastapi import Depends,FastAPI,UploadFile,HTTPException,File,Request,Respon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse,StreamingResponse
 from pydantic import BaseModel
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 from uuid import uuid4
+import ipaddress
 import json
 import logging
 import shutil
+import socket
 
 import httpx
 
@@ -26,8 +29,8 @@ from monitoring import get_stats
 from feedback import FeedbackRequest, FeedbackSummary, feedback_summary, record_feedback
 import auth
 from database.store import (
-    complete_profile, delete_session, init_db, list_sessions,
-    load_transcript, user_stats,
+    add_review, complete_profile, decide_review, delete_session, get_review,
+    init_db, list_reviews, list_sessions, load_transcript, user_stats,
 )
 from config import settings
 
@@ -252,6 +255,82 @@ def ask_agent(request:QuestionRequest, http_request:Request):
     }
 
 
+# --- controlled workflow (LangGraph) --------------------------------------
+
+@app.post("/workflow")
+def ask_workflow(request:QuestionRequest):
+    """The LangGraph controlled workflow: classify, search, answer, check
+    the answer, retry once, and hold it for staff if it still can't be
+    verified. Slower than /ask by a validation call; the trade is that no
+    unverified answer reaches the student. See graph/rag_workflow.py."""
+    question=request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    from graph.rag_workflow import run_workflow
+
+    session_id=request.session_id or str(uuid4())
+    history=SESSIONS.setdefault(session_id, [])
+    try:
+        result=run_workflow(question, list(history), request.category)
+    except LLMUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    if result["status"]=="needs_review":
+        add_review(result["thread_id"], question, result["draft"], result["issues"], result["sources"])
+        # The held draft is for staff, not the student.
+        result={k:v for k,v in result.items() if k!="draft"}
+
+    _record_turn(session_id, history, question, result["answer"])
+    return {**result, "question":question, "session_id":session_id}
+
+
+@app.get("/workflow/graph")
+def workflow_graph():
+    """The workflow's nodes and edges as Mermaid, drawn from the compiled
+    graph - so the diagram cannot drift from what actually runs."""
+    from graph.rag_workflow import mermaid
+    return {"mermaid":mermaid()}
+
+
+@app.get("/workflow/result/{thread_id}")
+def workflow_result(thread_id:str):
+    """Where a held answer ends up once staff have decided."""
+    review=get_review(thread_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="No held answer with that id.")
+    return {"thread_id":thread_id, "status":review["status"],
+            "answer":review["final_answer"] if review["status"]!="pending" else None}
+
+
+class ReviewDecision(BaseModel):
+    approved:bool
+    # Staff may correct the draft rather than just pass or fail it.
+    answer:str|None=None
+    note:str|None=None
+
+
+@app.get("/workflow/reviews")
+def workflow_reviews(status:str="pending", _staff=Depends(auth.require_staff)):
+    return {"reviews":list_reviews(None if status=="all" else status)}
+
+
+@app.post("/workflow/reviews/{thread_id}")
+def decide_workflow_review(thread_id:str, decision:ReviewDecision, staff=Depends(auth.require_staff)):
+    """Resume a paused run with a person's decision - LangGraph picks up
+    at the interrupt, from its checkpoint, as though it never stopped."""
+    review=get_review(thread_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="No held answer with that id.")
+    if review["status"]!="pending":
+        raise HTTPException(status_code=409, detail=f"Already {review['status']}.")
+
+    from graph.rag_workflow import resume_review
+    result=resume_review(thread_id, decision.approved, decision.answer or "", decision.note or "")
+    decide_review(thread_id, result["status"], result["answer"], staff.id)
+    return result
+
+
 class ProfileRequest(BaseModel):
     display_name:str
     # ISO "YYYY-MM-DD", or omitted. Validated in auth.parse_dob.
@@ -421,27 +500,69 @@ def submit_feedback(request:FeedbackRequest):
 
 
 @app.get("/feedback/summary", response_model=FeedbackSummary)
-def feedback_stats():
+def feedback_stats(_staff=Depends(auth.require_staff)):
     """Counts, satisfaction rate, and how ratings split between grounded
     and general-knowledge answers - the correlation worth watching."""
     return feedback_summary()
 
 
 @app.get("/stats")
-def stats():
+def stats(_staff=Depends(auth.require_staff)):
     """Timing breakdown for recent requests - retrieval vs LLM vs total,
     plus time-to-first-token for streamed ones. See monitoring.py."""
     return get_stats()
 
 
+def _is_public_address(url:str) -> bool:
+    """Does every address this host resolves to sit on the public internet?
+
+    The server fetches whatever it is given, so without this a URL can
+    point it at itself or the network behind it - 127.0.0.1:11434 is the
+    model server, and a cloud host's metadata service hands out
+    credentials. A host that resolves differently between this check and
+    the fetch (DNS rebinding) is not covered; being staff-only is the
+    other half of the defence.
+    """
+    host=urlparse(url).hostname
+    if not host:
+        return False
+    try:
+        addresses={info[4][0] for info in socket.getaddrinfo(host, None)}
+    except (socket.gaierror, UnicodeError):
+        return False
+    for address in addresses:
+        ip=ipaddress.ip_address(address.split("%")[0])
+        if not ip.is_global:
+            return False
+    return True
+
+
+@app.get("/eval/latest")
+def latest_evaluation(_staff=Depends(auth.require_staff)):
+    """The last run of tests/rag_eval.py, for the monitoring dashboard.
+    Evaluation is run deliberately, not per request - it costs dozens of
+    model calls - so this reports the most recent saved result."""
+    path=Path(__file__).resolve().parent/"reports"/"eval_report.json"
+    if not path.exists():
+        return {"available":False}
+    report=json.loads(path.read_text(encoding="utf-8"))
+    return {"available":True, **report}
+
+
 @app.post("/ingest-url")
-def ingest_url(request:UrlRequest):
+def ingest_url(request:UrlRequest, _staff=Depends(auth.require_staff)):
     url=request.url.strip()
 
     if not url.lower().startswith(("http://","https://")):
         raise HTTPException(
             status_code=400,
             detail="URL must start with http:// or https://"
+        )
+
+    if not _is_public_address(url):
+        raise HTTPException(
+            status_code=400,
+            detail="That address is not a public web page, or could not be found."
         )
 
     try:
@@ -484,7 +605,7 @@ def list_documents():
 
 
 @app.delete("/documents/{doc_id}")
-def delete_document_endpoint(doc_id:str):
+def delete_document_endpoint(doc_id:str, _staff=Depends(auth.require_staff)):
     """Remove a document from the knowledge base.
 
     Deletes the chunks, which is what makes it unsearchable. The original
@@ -511,7 +632,7 @@ def delete_document_endpoint(doc_id:str):
 
 
 @app.post("/upload")
-async def upload_document(file: UploadFile=File(...)):
+async def upload_document(file: UploadFile=File(...), _staff=Depends(auth.require_staff)):
     allowed_extensions={
         ".txt",
         ".md",
@@ -524,15 +645,19 @@ async def upload_document(file: UploadFile=File(...)):
             status_code=400,
             detail="File must have a filename"
         )
-    suffix=Path(file.filename).suffix.lower()
+    # The filename is whatever the client sent. Joined as-is, a name like
+    # "../../app.py" writes outside uploads/; only the final component is
+    # kept, with Windows separators treated as separators too.
+    filename=PurePosixPath(file.filename.replace("\\","/")).name
+    suffix=Path(filename).suffix.lower()
 
-    if suffix not in allowed_extensions:
+    if suffix not in allowed_extensions or filename in ("", ".", ".."):
         raise HTTPException(
             status_code=400,
             detail=f"unsupported file type :{suffix}"
         )
 
-    file_path= UPLOAD_DIR/file.filename
+    file_path= UPLOAD_DIR/filename
 
     try:
         with open(file_path,"wb") as buffer:
@@ -554,17 +679,17 @@ async def upload_document(file: UploadFile=File(...)):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=422,
-            detail=f"Could not process '{file.filename}': {e}"
+            detail=f"Could not process '{filename}': {e}"
         )
 
     if chunk_count==0:
         return {
-            "filename":file.filename,
+            "filename":filename,
             "message":"File uploaded, but no readable text was found in it "
                        "(e.g. a scanned/image-only PDF) - nothing was indexed."
         }
 
     return {
-        "filename":file.filename,
+        "filename":filename,
         "message":"Documents uploaded and indexed successfully"
     }

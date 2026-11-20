@@ -105,6 +105,52 @@ def _multi_query_candidates(
     return list(pooled.values())
 
 
+def _parent_of(vectorstore, child: Document, window: int) -> Document:
+    """The child chunk with its neighbours on either side, as one passage.
+
+    Small chunks match precisely but can cut an answer off mid-thought -
+    a requirement on one chunk, its exception on the next. Matching on the
+    small chunk and handing the model the larger span around it keeps the
+    precision of one and the context of the other. Parents are rebuilt
+    from chunk_index rather than stored twice: the neighbours are already
+    in the collection.
+    """
+    doc_id = child.metadata.get("doc_id")
+    index = child.metadata.get("chunk_index")
+    if doc_id is None or not isinstance(index, int):
+        return child
+
+    span = vectorstore.get(where={"$and": [
+        {"doc_id": doc_id},
+        {"chunk_index": {"$gte": index - window}},
+        {"chunk_index": {"$lte": index + window}},
+    ]})
+    pieces = sorted(zip(span.get("documents") or [], span.get("metadatas") or []),
+                    key=lambda piece: piece[1].get("chunk_index", 0))
+    if not pieces:
+        return child
+    return Document(
+        page_content="\n".join(text for text, _ in pieces),
+        metadata={**child.metadata, "parent_span": [index - window, index + window]},
+    )
+
+
+def _parent_candidates(vectorstore, query: str, *, category, file_type, k: int) -> list[Document]:
+    children = retrieve(vectorstore, query, category=category, file_type=file_type,
+                        k=k, strategy="similarity")
+    parents, covered = [], set()
+    for child in children:
+        key = (child.metadata.get("doc_id"), child.metadata.get("chunk_index"))
+        # A child already inside an earlier parent's span adds nothing.
+        if key in covered:
+            continue
+        parent = _parent_of(vectorstore, child, settings.PARENT_WINDOW)
+        start, end = parent.metadata.get("parent_span", [key[1], key[1]])
+        covered.update((key[0], i) for i in range(start, end + 1))
+        parents.append(parent)
+    return parents
+
+
 def _rerank_and_gate(query: str, candidates: list[Document], k: int) -> list[Document]:
     """Shared by every strategy that produces unscored candidates (MMR,
     multi-query): the cross-encoder is what actually judges them against
@@ -142,6 +188,12 @@ def retrieve(
     k = k or settings.RETRIEVER_K
     strategy = strategy or settings.RETRIEVAL_STRATEGY
     where = _build_filter(category, file_type)
+
+    if strategy == "parent":
+        # Same gate as similarity - a question the corpus can't answer
+        # still gets nothing - then each match is widened to its parent.
+        return _parent_candidates(vectorstore, query, category=category,
+                                  file_type=file_type, k=k)
 
     if strategy in ("mmr", "multi_query"):
         candidates = (

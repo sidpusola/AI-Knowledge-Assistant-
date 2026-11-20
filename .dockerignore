@@ -1,0 +1,27 @@
+# Secrets never go into an image; docker-compose passes .env at run time.
+.env
+.env.*
+!.env.example
+
+# Local environments and build output
+.conda/
+**/node_modules/
+frontend/
+**/__pycache__/
+*.pyc
+.git/
+.vscode/
+
+# Runtime data lives in the /data volume, not the image
+chroma_db/
+database/*.db
+database/*.db-*
+uploads/
+feedback.jsonl
+
+# Scratch eval dumps
+arith.json
+attrib.json
+latency.json
+length.json
+tool_latency.json

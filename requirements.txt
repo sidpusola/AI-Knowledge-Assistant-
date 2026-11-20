@@ -1,4 +1,41 @@
+# Pinned to what is installed and verified working in the "Langchain"
+# conda environment (Python 3.14.3). Install with:
+#   pip install -r requirements.txt
+# The Docker image installs the CPU build of torch first (see Dockerfile).
 
-# Web search for the agent's search_the_web tool. DuckDuckGo: free,
-# no API key, which keeps the all-local/no-cost constraint intact.
+# --- API ---
+fastapi==0.141.1
+uvicorn==0.52.1
+python-multipart==0.0.32
+httpx==0.28.1
+
+# --- Config and accounts ---
+pydantic==2.13.4
+itsdangerous==2.2.0
+sqlalchemy==2.0.51
+
+# --- LangChain core + integrations ---
+langchain-core==1.5.3
+langchain-community==0.4.2
+langchain-text-splitters==1.1.2
+langchain-chroma==1.1.0
+langchain-huggingface==1.2.2
+langchain-ollama==1.1.0
+
+# --- LangGraph: the controlled workflow and its SQLite checkpoints ---
+langgraph==1.2.10
+langgraph-checkpoint-sqlite==3.1.1
+
+# --- Vector store + embeddings ---
+chromadb==1.5.9
+sentence-transformers==5.7.0
+
+# --- Document loaders (PDF / DOCX / web pages) ---
+pypdf==6.14.2
+docx2txt==0.9
+beautifulsoup4==4.15.0
+
+# --- Agent tools ---
+# Web search for search_the_web. DuckDuckGo: free, no API key, which keeps
+# the all-local/no-cost constraint intact.
 ddgs==9.16.0

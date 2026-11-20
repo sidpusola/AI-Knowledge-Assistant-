@@ -249,6 +249,27 @@ def require_user(request: Request) -> User:
     return user
 
 
+def is_staff(user: User | None) -> bool:
+    """May this account change what every student is answered from?
+
+    The email route requires a verified address: an unverified one is
+    only a claim, and this list grants the power to delete material.
+    """
+    if user is None:
+        return False
+    if user.role == "staff":
+        return True
+    return bool(user.email_verified and user.email.lower() in settings.ADMIN_EMAILS)
+
+
+def require_staff(request: Request) -> User:
+    """FastAPI dependency: 401 signed out, 403 signed in as a student."""
+    user = require_user(request)
+    if not is_staff(user):
+        raise HTTPException(status_code=403, detail="Only staff can manage the knowledge base.")
+    return user
+
+
 def parse_dob(raw: str | None) -> date | None:
     """An ISO date from the onboarding form, or None.
 
@@ -279,4 +300,7 @@ def public_user(user: User) -> dict:
         "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
         "onboarded": user.onboarded,
         "role": user.role,
+        # Decides which controls the page shows. The server enforces it
+        # regardless - hiding a button is not access control.
+        "is_staff": is_staff(user),
     }

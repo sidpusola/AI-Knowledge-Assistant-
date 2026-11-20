@@ -5,7 +5,10 @@ import { deleteDocument, ingestUrl, uploadFile } from "../api.js";
 
 const ACCEPT = ".txt,.md,.pdf,.docx,.csv";
 
-export default function DocumentsView({ documents, onDocumentsChanged }) {
+export default function DocumentsView({ documents, user, onDocumentsChanged }) {
+  // Students see what is searchable; adding and removing changes every
+  // student's answers, so it is staff-only. The server enforces it too.
+  const canManage = Boolean(user?.is_staff);
   const [busy, setBusy] = useState(null);     // "upload" | "url" | a doc_id
   const [status, setStatus] = useState(null); // { tone, text }
   const [url, setUrl] = useState("");
@@ -88,6 +91,15 @@ export default function DocumentsView({ documents, onDocumentsChanged }) {
           {chunks} searchable {chunks === 1 ? "passage" : "passages"}.
         </p>
 
+        {!canManage && (
+          <p className="doc-status ok" role="note">
+            {user
+              ? "Only course staff can add or remove documents. Ask your trainer if something is missing."
+              : "Sign in as course staff to add or remove documents."}
+          </p>
+        )}
+
+        {canManage && (
         <div
           className={`drop ${dragging ? "is-over" : ""}`}
           onDragOver={(event) => {
@@ -150,6 +162,7 @@ export default function DocumentsView({ documents, onDocumentsChanged }) {
             </button>
           </form>
         </div>
+        )}
 
         {status && (
           <p className={`doc-status ${status.tone}`} role="status">{status.text}</p>
@@ -200,6 +213,7 @@ export default function DocumentsView({ documents, onDocumentsChanged }) {
                     <td>{doc.chunks}</td>
                     <td>{doc.ingested_at || "—"}</td>
                     <td>
+                      {canManage && (
                       <div className="row-acts">
                         <button
                           type="button"
@@ -213,6 +227,7 @@ export default function DocumentsView({ documents, onDocumentsChanged }) {
                           <Trash2 aria-hidden="true" />
                         </button>
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))}

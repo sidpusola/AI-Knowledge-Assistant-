@@ -10,8 +10,10 @@ const API_BASE = import.meta.env.DEV ? "/api" : BACKEND_ORIGIN;
 
 /** The host the session cookie belongs to. Cookies are scoped by host
  *  and ignore the port, so a page on a different hostname - localhost
- *  versus 127.0.0.1 - can never send it, however the request is made. */
-export const COOKIE_HOST = new URL(BACKEND_ORIGIN).hostname;
+ *  versus 127.0.0.1 - can never send it, however the request is made.
+ *  Resolved against the page: behind the Docker nginx proxy the API base
+ *  is the relative "/api", and new URL("/api") alone throws. */
+export const COOKIE_HOST = new URL(BACKEND_ORIGIN, window.location.href).hostname;
 
 async function parseJsonOrThrow(response) {
   const data = await response.json().catch(() => null);
@@ -41,13 +43,14 @@ export async function askQuestion(question, sessionId) {
 //                       chunk (a normal HTTP error) or mid-stream (an
 //                       "error" SSE event - the status is already 200
 //                       by then, so it can't be reported as an HTTP code)
-export async function streamQuestion(question, sessionId, { onToken, onDone, onError } = {}) {
+//   category          - optional subject/department to restrict retrieval to
+export async function streamQuestion(question, sessionId, { onToken, onDone, onError, category } = {}) {
   let response;
   try {
     response = await fetch(`${API_BASE}/ask/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, session_id: sessionId }),
+      body: JSON.stringify({ question, session_id: sessionId, category: category || null }),
     });
   } catch {
     onError?.("Could not reach the assistant. Please try again.");
@@ -97,6 +100,23 @@ export async function streamQuestion(question, sessionId, { onToken, onDone, onE
       if (rawEvent.trim()) handleEvent(rawEvent);
     }
   }
+}
+
+/** The LangGraph controlled workflow: slower than streaming Ask, but the
+ *  answer is checked against the materials before it is returned, and
+ *  held for staff review when it can't be verified. */
+export async function askWorkflow(question, sessionId, category) {
+  const response = await fetch(`${API_BASE}/workflow`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, session_id: sessionId, category: category || null }),
+  });
+  return parseJsonOrThrow(response);
+}
+
+export async function fetchWorkflowResult(threadId) {
+  const response = await fetch(`${API_BASE}/workflow/result/${threadId}`);
+  return parseJsonOrThrow(response);
 }
 
 export async function uploadFile(file) {
@@ -214,6 +234,22 @@ export async function fetchProgress() {
   });
   return parseJsonOrThrow(response);
 }
+
+/* --- monitoring (staff) ----------------------------------------------- */
+
+async function getJson(path) {
+  const response = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+  return parseJsonOrThrow(response);
+}
+
+export const fetchStats = () => getJson("/stats");
+export const fetchFeedbackSummary = () => getJson("/feedback/summary");
+export const fetchEvaluation = () => getJson("/eval/latest");
+export const fetchReviews = () => getJson("/workflow/reviews");
+export const fetchWorkflowGraph = () => getJson("/workflow/graph");
+
+export const decideReview = (threadId, { approved, answer, note }) =>
+  postJson(`/workflow/reviews/${threadId}`, { approved, answer: answer || null, note: note || null });
 
 /* --- accounts -------------------------------------------------------
  *

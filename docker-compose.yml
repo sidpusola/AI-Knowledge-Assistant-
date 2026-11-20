@@ -1,0 +1,72 @@
+# The whole product: model server, backend, and web front end.
+#
+#   cp .env.example .env      # then fill in SESSION_SECRET, Google OAuth, ADMIN_EMAILS
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# The first start pulls the two Ollama models (about 6.6 GB) into a volume.
+
+services:
+  ollama:
+    image: ollama/ollama:0.40.9
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    # For an NVIDIA GPU, uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  # One-shot: fetch the models the backend uses, then exit.
+  ollama-pull:
+    image: ollama/ollama:0.40.9
+    depends_on:
+      ollama: { condition: service_healthy }
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:7b && ollama pull qwen2.5:3b"]
+    restart: "no"
+
+  backend:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    # These win over .env: a .env written for local development sets paths
+    # like CHROMA_DB_PATH=chroma_db, which inside the container would point
+    # outside the /data volume - unwritable, and lost on every rebuild.
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      DATABASE_URL: sqlite:////data/app.db
+      CHROMA_DB_PATH: /data/chroma_db
+      UPLOAD_DIR: /data/uploads
+      FEEDBACK_PATH: /data/feedback.jsonl
+      WORKFLOW_DB_PATH: /data/workflow_checkpoints.db
+      HF_OFFLINE: "true"
+      FRONTEND_URL: ${PUBLIC_URL:-http://localhost:8080}
+      OAUTH_REDIRECT_URI: ${PUBLIC_URL:-http://localhost:8080}/api/auth/google/callback
+      CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
+    volumes:
+      - data:/data
+    depends_on:
+      ollama: { condition: service_healthy }
+      ollama-pull: { condition: service_completed_successfully }
+    restart: unless-stopped
+    # Not published: only reachable through the front end's /api proxy.
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      backend: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  data:

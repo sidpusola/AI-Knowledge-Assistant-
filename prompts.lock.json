@@ -1,0 +1,18 @@
+{
+  "eval.faithfulness": {
+    "version": "v1",
+    "fingerprint": "a2d07d22d1ba"
+  },
+  "workflow.answer": {
+    "version": "v1",
+    "fingerprint": "5d40567b14ae"
+  },
+  "workflow.classify": {
+    "version": "v3",
+    "fingerprint": "f51ad9323cfb"
+  },
+  "workflow.validate": {
+    "version": "v1",
+    "fingerprint": "d857d921914d"
+  }
+}

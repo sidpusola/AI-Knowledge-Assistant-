@@ -13,6 +13,7 @@ import CourseView from "./components/CourseView.jsx";
 import DocumentsView from "./components/DocumentsView.jsx";
 import FlashcardsView from "./components/FlashcardsView.jsx";
 import GuideView from "./components/GuideView.jsx";
+import MonitoringView from "./components/MonitoringView.jsx";
 import PlacementView from "./components/PlacementView.jsx";
 import ProgressView from "./components/ProgressView.jsx";
 import QuizView from "./components/QuizView.jsx";
@@ -188,6 +189,7 @@ function App() {
           key={sessionId}
           sessionId={sessionId}
           documents={documents}
+          user={user}
           onDocumentsChanged={refreshDocuments}
           onNewConversation={startNewConversation}
           asideHidden={asideHidden}
@@ -195,7 +197,7 @@ function App() {
         />
       )}
       {activeTab === "documents" && (
-        <DocumentsView documents={documents} onDocumentsChanged={refreshDocuments} />
+        <DocumentsView documents={documents} user={user} onDocumentsChanged={refreshDocuments} />
       )}
       {activeTab === "course" && (
         <CourseView documents={documents} user={user} onNavigate={navigate} />
@@ -210,6 +212,7 @@ function App() {
         <FlashcardsView documents={documents} focusDoc={focusDoc} user={user} onNavigate={navigate} />
       )}
       {activeTab === "progress" && <ProgressView user={user} />}
+      {activeTab === "monitoring" && <MonitoringView user={user} />}
       {activeTab === "placement" && (
         <PlacementView documents={documents} focusDoc={focusDoc} user={user} onNavigate={navigate} />
       )}

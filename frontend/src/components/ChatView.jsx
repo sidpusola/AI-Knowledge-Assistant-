@@ -1,15 +1,15 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  BookOpen, CheckCircle2, FileText, Info, Mic, PanelRightClose,
-  PanelRightOpen, Paperclip, Plus, Send,
+  BookOpen, CheckCircle2, Clock, FileText, Info, Mic, PanelRightClose,
+  PanelRightOpen, Paperclip, Plus, Send, ShieldCheck,
 } from "lucide-react";
 
 import DiagramPlaceholder from "./DiagramPlaceholder.jsx";
 import MessageFeedback from "./MessageFeedback.jsx";
 import FlowchartRenderer from "./FlowchartRenderer.jsx";
-import { streamQuestion, uploadFile } from "../api.js";
+import { askWorkflow, fetchWorkflowResult, streamQuestion, uploadFile } from "../api.js";
 
 /** Openers built from what is actually indexed, so a student is never
  *  invited to ask about material this install has never seen. */
@@ -33,6 +33,7 @@ const Message = memo(function Message({
   isStreaming = false,
   question = "",
   sessionId = null,
+  onCheckReview = null,
 }) {
   // Built once per isStreaming value and reused. react-markdown keys its
   // renderers by identity, so handing it a fresh object every render makes
@@ -103,6 +104,23 @@ const Message = memo(function Message({
     );
   }
 
+  // A checked answer the workflow could not verify is held for staff; the
+  // student sees that it is waiting, not a guess.
+  if (message.status === "needs_review") {
+    return (
+      <li className="answer held">
+        <div className="answer-flag"><Clock aria-hidden="true" />Waiting for staff review</div>
+        <div className="chat-markdown"><p>{message.content}</p></div>
+        <button
+          type="button" className="chip"
+          onClick={() => onCheckReview?.(message.id, message.threadId)}
+        >
+          Check again
+        </button>
+      </li>
+    );
+  }
+
   // The left edge is the provenance: pine when the answer is grounded in
   // the student's own materials, grey when it came from the model's
   // general knowledge. Nothing else on the page carries that distinction,
@@ -114,9 +132,15 @@ const Message = memo(function Message({
       <div className="answer-flag">
         {message.isError
           ? <><Info aria-hidden="true" />Something went wrong</>
-          : grounded
-            ? <><CheckCircle2 aria-hidden="true" />From your course materials</>
-            : <><BookOpen aria-hidden="true" />From general knowledge</>}
+          : message.status === "refused" || message.status === "declined"
+            ? <><Info aria-hidden="true" />Outside what I can help with</>
+          : message.status === "approved"
+            ? <><ShieldCheck aria-hidden="true" />Reviewed by staff</>
+            : grounded
+              ? message.checked
+                ? <><ShieldCheck aria-hidden="true" />Checked against your course materials</>
+                : <><CheckCircle2 aria-hidden="true" />From your course materials</>
+              : <><BookOpen aria-hidden="true" />From general knowledge</>}
       </div>
 
       <div className="chat-markdown">
@@ -160,6 +184,7 @@ function Thinking() {
 export default function ChatView({
   sessionId,
   documents = [],
+  user = null,
   onDocumentsChanged,
   onNewConversation,
   asideHidden = false,
@@ -169,6 +194,15 @@ export default function ChatView({
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isAttaching, setIsAttaching] = useState(false);
+  // "" searches everything; otherwise retrieval is limited to one subject.
+  const [subject, setSubject] = useState("");
+  // Checked answers go through the LangGraph workflow: validated before
+  // they are shown, held for staff when they can't be. Slower, no stream.
+  const [checked, setChecked] = useState(false);
+  const subjects = [...new Set(documents.map((d) => d.category).filter(Boolean))].sort();
+  // Adding to the knowledge base changes every student's answers, so the
+  // paperclip is staff-only. The server enforces it either way.
+  const canManage = Boolean(user?.is_staff);
   const fileInputRef = useRef(null);
   const scrollAnchorRef = useRef(null);
 
@@ -188,6 +222,21 @@ export default function ChatView({
     setInput("");
     setIsSending(true);
 
+    if (checked) {
+      try {
+        const data = await askWorkflow(question, sessionId, subject);
+        appendMessage({
+          role: "assistant", content: data.answer, sources: data.sources || [],
+          status: data.status, threadId: data.thread_id, checked: true,
+        });
+      } catch (error) {
+        appendMessage({ role: "assistant", content: error.message, isError: true });
+      } finally {
+        setIsSending(false);
+      }
+      return;
+    }
+
     // The answer doesn't exist until the first real (non-empty) token
     // arrives - until then the thinking indicator stays visible, so a
     // stray empty chunk at the start never shows as a blank answer.
@@ -205,6 +254,7 @@ export default function ChatView({
     };
 
     await streamQuestion(question, sessionId, {
+      category: subject,
       onToken: (chunk) => { if (chunk) appendToAssistant(chunk); },
       onDone: (payload) => {
         // Empty sources is not a failure - "hello" and a general-knowledge
@@ -234,6 +284,26 @@ export default function ChatView({
       },
     });
   };
+
+  // Stable identity: Message is memoised, and a new function each render
+  // would re-render every answer on every keystroke.
+  const checkReview = useCallback(async (messageId, threadId) => {
+    const note = (content) =>
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "system", content }]);
+    try {
+      const result = await fetchWorkflowResult(threadId);
+      if (result.status === "pending") {
+        note("Still waiting for a member of staff to review that answer.");
+        return;
+      }
+      setMessages((prev) => prev.map((m) => (m.id === messageId
+        ? { ...m, content: result.answer, status: result.status,
+            sources: result.status === "approved" ? m.sources : [] }
+        : m)));
+    } catch (error) {
+      note(error.message);
+    }
+  }, []);
 
   const handleAttach = async (event) => {
     const file = event.target.files?.[0];
@@ -295,7 +365,9 @@ export default function ChatView({
               <p className="greet-sub">
                 {documents.length
                   ? "Ask anything from your materials. Every answer shows which document it came from — and says so plainly when it had to fall back on general knowledge."
-                  : "Attach a PDF, Word file or set of notes with the paperclip below. Once it is indexed you can ask about it, and answers will cite the page."}
+                  : canManage
+                    ? "Attach a PDF, Word file or set of notes with the paperclip below. Once it is indexed you can ask about it, and answers will cite the page."
+                    : "Your course staff haven't added any materials yet. You can still ask general questions."}
               </p>
 
               {starters.length > 0 && (
@@ -322,6 +394,7 @@ export default function ChatView({
                   isStreaming={
                     isSending && index === messages.length - 1 && message.role === "assistant"
                   }
+                  onCheckReview={checkReview}
                 />
               ))}
               {isSending && <Thinking />}
@@ -353,23 +426,51 @@ export default function ChatView({
             aria-label="Ask a question"
           />
           <div className="composer-bar">
-            <input
-              type="file" ref={fileInputRef} onChange={handleAttach} hidden
-              accept=".txt,.md,.pdf,.docx,.csv"
-            />
-            <button
-              type="button" className="cbtn" title="Attach a document"
-              aria-label="Attach a document"
-              onClick={() => fileInputRef.current?.click()} disabled={isAttaching}
-            >
-              <Paperclip aria-hidden="true" />
-            </button>
+            {canManage && (
+              <>
+                <input
+                  type="file" ref={fileInputRef} onChange={handleAttach} hidden
+                  accept=".txt,.md,.pdf,.docx,.csv"
+                />
+                <button
+                  type="button" className="cbtn" title="Add a document to the knowledge base"
+                  aria-label="Add a document to the knowledge base"
+                  onClick={() => fileInputRef.current?.click()} disabled={isAttaching}
+                >
+                  <Paperclip aria-hidden="true" />
+                </button>
+              </>
+            )}
             <button
               type="button" className="cbtn" title="Voice input is not available yet"
               aria-label="Voice input is not available yet" disabled
             >
               <Mic aria-hidden="true" />
             </button>
+
+            <button
+              type="button"
+              className={`chip check-toggle ${checked ? "on" : ""}`}
+              onClick={() => setChecked((v) => !v)}
+              aria-pressed={checked}
+              title="Check each answer against your materials before showing it. Slower; unverifiable answers go to staff."
+            >
+              <ShieldCheck aria-hidden="true" />Checked answers
+            </button>
+
+            {subjects.length > 1 && (
+              <label className="subject-pick">
+                <span className="visually-hidden">Search within</span>
+                <select
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                  aria-label="Search within a subject"
+                >
+                  <option value="">All subjects</option>
+                  {subjects.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </label>
+            )}
 
             {messages.length > 0 && (
               <button type="button" className="chip" onClick={onNewConversation}>

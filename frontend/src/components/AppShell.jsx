@@ -1,5 +1,5 @@
 import {
-  BarChart3, BookOpen, Briefcase, Compass, FileText, GraduationCap,
+  Activity, BarChart3, BookOpen, Briefcase, Compass, FileText, GraduationCap,
   Layers, ListChecks, MessageCircle, PanelLeftClose,
 } from "lucide-react";
 
@@ -14,9 +14,10 @@ const NAV = [
   { id: "cards", label: "Flashcards", Icon: Layers, group: "Practice" },
   { id: "progress", label: "Progress", Icon: BarChart3, group: "Your track" },
   { id: "placement", label: "Placement", Icon: Briefcase, group: "Your track" },
+  { id: "monitoring", label: "Monitoring", Icon: Activity, group: "Admin", staffOnly: true },
 ];
 
-const GROUPS = ["Study", "Practice", "Your track"];
+const GROUPS = ["Study", "Practice", "Your track", "Admin"];
 
 function NavItem({ item, active, onSelect }) {
   const { id, label, Icon } = item;
@@ -85,19 +86,25 @@ export default function AppShell({
         </div>
 
         <nav>
-          {GROUPS.map((group) => (
-            <div className="nav-group" key={group}>
-              <div className="nav-head">{group}</div>
-              {NAV.filter((item) => item.group === group).map((item) => (
-                <NavItem
-                  key={item.id}
-                  item={item}
-                  active={activeTab === item.id}
-                  onSelect={onTabChange}
-                />
-              ))}
-            </div>
-          ))}
+          {GROUPS.map((group) => {
+            const items = NAV.filter(
+              (item) => item.group === group && (!item.staffOnly || user?.is_staff)
+            );
+            if (!items.length) return null;
+            return (
+              <div className="nav-group" key={group}>
+                <div className="nav-head">{group}</div>
+                {items.map((item) => (
+                  <NavItem
+                    key={item.id}
+                    item={item}
+                    active={activeTab === item.id}
+                    onSelect={onTabChange}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="rail-footer">
